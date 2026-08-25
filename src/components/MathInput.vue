@@ -2,11 +2,15 @@
 import { computed } from "vue"
 import { glowFor } from "../lib/numberblockColors"
 
-const props = defineProps<{
-  value: number | null
-  active: boolean
-  slotLabel: string
-}>()
+const props = withDefaults(
+  defineProps<{
+    value: number | null
+    active: boolean
+    slotLabel: string
+    visible?: boolean
+  }>(),
+  { visible: true },
+)
 
 const emit = defineEmits<{
   focus: []
@@ -19,7 +23,7 @@ const glow = computed(() => glowFor(props.value))
   <button
     type="button"
     class="slot"
-    :class="{ active, filled: value !== null }"
+    :class="{ active, filled: value !== null && visible }"
     :style="{
       '--glow': glow ?? 'transparent',
     }"
@@ -27,7 +31,7 @@ const glow = computed(() => glowFor(props.value))
     :aria-pressed="active"
     @click="emit('focus')"
   >
-    <span v-if="value !== null" class="numeral">{{ value }}</span>
+    <span v-if="value !== null && visible" class="numeral">{{ value }}</span>
   </button>
 </template>
 

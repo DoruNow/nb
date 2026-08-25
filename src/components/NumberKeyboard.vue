@@ -46,11 +46,11 @@ const emit = defineEmits<{
           :aria-label="String(digit)"
           @click="emit('digit', digit)"
         >
+          <span class="digit" aria-hidden="true">{{ digit }}</span>
           <NumberblockView
             class="thumb"
             :value="digit"
             :alt="String(digit)"
-            keep-numeral
           />
         </button>
       </div>
@@ -124,6 +124,7 @@ const emit = defineEmits<{
 .keys {
   display: flex;
   flex: 1;
+  align-items: stretch;
   justify-content: center;
   gap: 0.4rem;
   min-width: 0;
@@ -132,12 +133,13 @@ const emit = defineEmits<{
 .key {
   flex: 1 1 0;
   display: flex;
-  align-items: flex-end;
-  justify-content: center;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
   min-width: 3rem;
   max-width: 5.6rem;
   height: 6.4rem;
-  padding: 0.35rem 0.2rem 0.3rem;
+  padding: 0.28rem 0.15rem 0.22rem;
   border: 0;
   border-radius: 0.95rem;
   background: #fff;
@@ -146,6 +148,14 @@ const emit = defineEmits<{
     0 3px 0 #d9d4cc,
     0 6px 12px rgba(70, 45, 15, 0.08);
   cursor: pointer;
+}
+
+.digit {
+  flex: 0 0 auto;
+  font-size: 0.92rem;
+  font-weight: 800;
+  line-height: 1;
+  color: #2a2a2a;
 }
 
 .key:hover {
@@ -160,12 +170,16 @@ const emit = defineEmits<{
 }
 
 .thumb {
-  height: 5.6rem;
+  flex: 1 1 auto;
   width: 100%;
+  min-height: 0;
+  height: auto;
 }
 
 .thumb :deep(img) {
   filter: none;
+  max-height: 100%;
+  object-position: bottom center;
 }
 
 .action {
@@ -236,8 +250,8 @@ const emit = defineEmits<{
     padding: 0.3rem 0.25rem;
   }
 
-  .thumb {
-    height: 4.8rem;
+  .digit {
+    font-size: 0.8rem;
   }
 }
 </style>

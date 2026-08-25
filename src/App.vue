@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, watch } from "vue"
+import { onMounted, onUnmounted } from "vue"
 import MathEquation from "./components/MathEquation.vue"
 import NumberKeyboard from "./components/NumberKeyboard.vue"
+import { numberblocksAssets } from "./lib/numberblocksSb3"
 import { useEquation } from "./model/equation"
 
 const {
@@ -19,18 +20,17 @@ const {
   clear,
 } = useEquation()
 
-const jumping = ref(false)
-
-watch(correct, (value) => {
-  jumping.value = value === true
-})
+function onDigit(digit: number) {
+  void numberblocksAssets.unlockAudio()
+  applyDigit(digit)
+}
 
 function onKeydown(event: KeyboardEvent) {
   if (event.metaKey || event.ctrlKey || event.altKey) return
 
   if (event.key >= "0" && event.key <= "9") {
     event.preventDefault()
-    applyDigit(Number(event.key))
+    onDigit(Number(event.key))
   } else if (event.key === "Tab") {
     event.preventDefault()
     advance()
@@ -55,7 +55,7 @@ onUnmounted(() => {
         :answer="answer"
         :operation="operation"
         :active-field="activeField"
-        :jumping="jumping"
+        :correct="correct"
         @focus="focus"
       />
     </div>
@@ -63,7 +63,7 @@ onUnmounted(() => {
     <footer class="band bottom">
       <NumberKeyboard
         :can-undo="canUndo"
-        @digit="applyDigit"
+        @digit="onDigit"
         @undo="undo"
         @clear="clear"
       />

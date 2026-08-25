@@ -43,6 +43,7 @@ export type ScratchTarget = {
   isStage: boolean;
   name: string;
   costumes: ScratchCostume[];
+  sounds?: ScratchSound[];
 
   // Sprite transform metadata. These fields are absent on the Stage.
   x?: number;
@@ -52,6 +53,15 @@ export type ScratchTarget = {
   visible?: boolean;
   rotationStyle?: string;
   layerOrder?: number;
+};
+
+export type ScratchSound = {
+  name: string;
+  assetId: string;
+  md5ext: string;
+  dataFormat: string;
+  rate?: number;
+  sampleCount?: number;
 };
 
 type ScratchProject = {
@@ -215,7 +225,10 @@ export function normalizeScratchSvg(svg: string): string {
   const viewBoxMatch = svgOpen.match(/viewBox\s*=\s*"([^"]+)"/i);
   if (!viewBoxMatch) return svg;
 
-  const box = viewBoxMatch[1].trim().split(/[\s,]+/).map(Number);
+  const box = viewBoxMatch[1]
+    .trim()
+    .split(/[\s,]+/)
+    .map(Number);
   if (box.length !== 4 || box.some((n) => !Number.isFinite(n))) return svg;
   const [minX, minY, width, height] = box;
 
@@ -236,10 +249,10 @@ export function normalizeScratchSvg(svg: string): string {
   }
 
   const viewBox = `${minX - tx} ${minY - ty} ${width} ${height}`;
-  const unwrappedGroup = wrapperMatch[0].replace(TRANSLATE_RE, "").replace(
-    /<g\s+/,
-    "<g ",
-  ).replace(/<g\s*>/, "<g>");
+  const unwrappedGroup = wrapperMatch[0]
+    .replace(TRANSLATE_RE, "")
+    .replace(/<g\s+/, "<g ")
+    .replace(/<g\s*>/, "<g>");
 
   return (
     svg.slice(0, svgOpenMatch.index) +
@@ -249,121 +262,121 @@ export function normalizeScratchSvg(svg: string): string {
   );
 }
 
-type PathBox = { minX: number; minY: number; maxX: number; maxY: number }
+type PathBox = { minX: number; minY: number; maxX: number; maxY: number };
 
 function tokenizePath(d: string): Array<string | number> {
-  const tokens: Array<string | number> = []
-  const re = /([MmLlHhVvCcSsQqTtAaZz])|(-?\d*\.?\d+(?:e[-+]?\d+)?)/g
-  let match: RegExpExecArray | null
+  const tokens: Array<string | number> = [];
+  const re = /([MmLlHhVvCcSsQqTtAaZz])|(-?\d*\.?\d+(?:e[-+]?\d+)?)/g;
+  let match: RegExpExecArray | null;
   while ((match = re.exec(d))) {
-    if (match[1]) tokens.push(match[1])
-    else tokens.push(Number(match[2]))
+    if (match[1]) tokens.push(match[1]);
+    else tokens.push(Number(match[2]));
   }
-  return tokens
+  return tokens;
 }
 
 function pathBBox(d: string): PathBox | null {
-  let cx = 0
-  let cy = 0
-  let sx = 0
-  let sy = 0
-  let minX = Infinity
-  let minY = Infinity
-  let maxX = -Infinity
-  let maxY = -Infinity
+  let cx = 0;
+  let cy = 0;
+  let sx = 0;
+  let sy = 0;
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
 
   const add = (x: number, y: number) => {
-    minX = Math.min(minX, x)
-    minY = Math.min(minY, y)
-    maxX = Math.max(maxX, x)
-    maxY = Math.max(maxY, y)
-  }
+    minX = Math.min(minX, x);
+    minY = Math.min(minY, y);
+    maxX = Math.max(maxX, x);
+    maxY = Math.max(maxY, y);
+  };
 
-  const tokens = tokenizePath(d)
-  let i = 0
-  let cmd = "M"
+  const tokens = tokenizePath(d);
+  let i = 0;
+  let cmd = "M";
 
   while (i < tokens.length) {
-    const token = tokens[i]
+    const token = tokens[i];
     if (typeof token === "string") {
-      cmd = token
-      i += 1
-      continue
+      cmd = token;
+      i += 1;
+      continue;
     }
 
-    const rel = cmd === cmd.toLowerCase()
-    const kind = cmd.toUpperCase()
+    const rel = cmd === cmd.toLowerCase();
+    const kind = cmd.toUpperCase();
 
     if (kind === "Z") {
-      cx = sx
-      cy = sy
-      continue
+      cx = sx;
+      cy = sy;
+      continue;
     }
 
     if (kind === "M" || kind === "L" || kind === "T") {
-      const x = tokens[i] as number
-      const y = tokens[i + 1] as number
-      i += 2
-      cx = rel ? cx + x : x
-      cy = rel ? cy + y : y
+      const x = tokens[i] as number;
+      const y = tokens[i + 1] as number;
+      i += 2;
+      cx = rel ? cx + x : x;
+      cy = rel ? cy + y : y;
       if (kind === "M") {
-        sx = cx
-        sy = cy
+        sx = cx;
+        sy = cy;
       }
-      add(cx, cy)
+      add(cx, cy);
     } else if (kind === "H") {
-      const x = tokens[i] as number
-      i += 1
-      cx = rel ? cx + x : x
-      add(cx, cy)
+      const x = tokens[i] as number;
+      i += 1;
+      cx = rel ? cx + x : x;
+      add(cx, cy);
     } else if (kind === "V") {
-      const y = tokens[i] as number
-      i += 1
-      cy = rel ? cy + y : y
-      add(cx, cy)
+      const y = tokens[i] as number;
+      i += 1;
+      cy = rel ? cy + y : y;
+      add(cx, cy);
     } else if (kind === "C") {
-      const p = tokens.slice(i, i + 6) as number[]
-      i += 6
+      const p = tokens.slice(i, i + 6) as number[];
+      i += 6;
       for (let k = 0; k < 6; k += 2) {
-        const x = rel ? cx + p[k] : p[k]
-        const y = rel ? cy + p[k + 1] : p[k + 1]
-        add(x, y)
+        const x = rel ? cx + p[k] : p[k];
+        const y = rel ? cy + p[k + 1] : p[k + 1];
+        add(x, y);
         if (k === 4) {
-          cx = x
-          cy = y
+          cx = x;
+          cy = y;
         }
       }
     } else if (kind === "S" || kind === "Q") {
-      const p = tokens.slice(i, i + 4) as number[]
-      i += 4
+      const p = tokens.slice(i, i + 4) as number[];
+      i += 4;
       for (let k = 0; k < 4; k += 2) {
-        const x = rel ? cx + p[k] : p[k]
-        const y = rel ? cy + p[k + 1] : p[k + 1]
-        add(x, y)
+        const x = rel ? cx + p[k] : p[k];
+        const y = rel ? cy + p[k + 1] : p[k + 1];
+        add(x, y);
         if (k === 2) {
-          cx = x
-          cy = y
+          cx = x;
+          cy = y;
         }
       }
     } else if (kind === "A") {
-      const p = tokens.slice(i, i + 7) as number[]
-      i += 7
-      cx = rel ? cx + p[5] : p[5]
-      cy = rel ? cy + p[6] : p[6]
-      add(cx, cy)
+      const p = tokens.slice(i, i + 7) as number[];
+      i += 7;
+      cx = rel ? cx + p[5] : p[5];
+      cy = rel ? cy + p[6] : p[6];
+      add(cx, cy);
     } else {
-      break
+      break;
     }
   }
 
-  if (!Number.isFinite(minX)) return null
-  return { minX, minY, maxX, maxY }
+  if (!Number.isFinite(minX)) return null;
+  return { minX, minY, maxX, maxY };
 }
 
 function isBlackFill(fill: string | undefined): boolean {
-  if (!fill) return false
-  const value = fill.trim().toLowerCase()
-  return value === "#000" || value === "#000000" || value === "black"
+  if (!fill) return false;
+  const value = fill.trim().toLowerCase();
+  return value === "#000" || value === "#000000" || value === "black";
 }
 
 /**
@@ -372,64 +385,223 @@ function isBlackFill(fill: string | undefined): boolean {
  * the empty space it left behind.
  */
 export function stripCostumeNumeral(svg: string): string {
-  const svgOpenMatch = svg.match(/<svg\b[^>]*>/i)
-  if (!svgOpenMatch) return svg
+  const svgOpenMatch = svg.match(/<svg\b[^>]*>/i);
+  if (!svgOpenMatch) return svg;
 
-  const viewBoxMatch = svgOpenMatch[0].match(/viewBox\s*=\s*"([^"]+)"/i)
-  if (!viewBoxMatch) return svg
+  const viewBoxMatch = svgOpenMatch[0].match(/viewBox\s*=\s*"([^"]+)"/i);
+  if (!viewBoxMatch) return svg;
 
-  const box = viewBoxMatch[1].trim().split(/[\s,]+/).map(Number)
-  if (box.length !== 4 || box.some((n) => !Number.isFinite(n))) return svg
-  const [, viewY, , viewH] = box
+  const box = viewBoxMatch[1]
+    .trim()
+    .split(/[\s,]+/)
+    .map(Number);
+  if (box.length !== 4 || box.some((n) => !Number.isFinite(n))) return svg;
+  const [, viewY, , viewH] = box;
 
-  const pathRe = /<path\b([^>]*)>(?:<\/path>)?/gi
+  const pathRe = /<path\b([^>]*)>(?:<\/path>)?/gi;
   let stripped = svg.replace(pathRe, (full, attrs: string) => {
-    const d = attrs.match(/\bd\s*=\s*"([^"]+)"/i)?.[1]
-    const fill = attrs.match(/\bfill\s*=\s*"([^"]+)"/i)?.[1]
-    if (!d || !isBlackFill(fill)) return full
+    const d = attrs.match(/\bd\s*=\s*"([^"]+)"/i)?.[1];
+    const fill = attrs.match(/\bfill\s*=\s*"([^"]+)"/i)?.[1];
+    if (!d || !isBlackFill(fill)) return full;
 
-    const bounds = pathBBox(d)
-    if (!bounds) return full
+    const bounds = pathBBox(d);
+    if (!bounds) return full;
 
-    const height = bounds.maxY - bounds.minY
-    const width = bounds.maxX - bounds.minX
-    const fromTop = bounds.minY - viewY
+    const height = bounds.maxY - bounds.minY;
+    const width = bounds.maxX - bounds.minX;
+    const fromTop = bounds.minY - viewY;
     // Only drop overlay numerals that live entirely in the top band.
     // One's pupil is also a small black path, but it sits on the face.
-    const overlayBand = Math.min(24, viewH * 0.38)
+    const overlayBand = Math.min(24, viewH * 0.38);
     const looksLikeDigit =
       height >= 8 &&
       height <= 22 &&
       height <= viewH * 0.35 &&
       width <= 16 &&
       fromTop >= -2 &&
-      bounds.maxY <= viewY + overlayBand
+      bounds.maxY <= viewY + overlayBand;
 
-    if (looksLikeDigit) return ""
-    return full
-  })
+    if (looksLikeDigit) return "";
+    return full;
+  });
 
-  const remaining: PathBox[] = []
+  const remaining: PathBox[] = [];
   for (const match of stripped.matchAll(/<path\b([^>]*)>/gi)) {
-    const d = match[1].match(/\bd\s*=\s*"([^"]+)"/i)?.[1]
-    if (!d) continue
-    const bounds = pathBBox(d)
-    if (bounds) remaining.push(bounds)
+    const d = match[1].match(/\bd\s*=\s*"([^"]+)"/i)?.[1];
+    if (!d) continue;
+    const bounds = pathBBox(d);
+    if (bounds) remaining.push(bounds);
   }
-  if (remaining.length === 0) return svg
+  if (remaining.length === 0) return svg;
 
-  const minY = Math.min(...remaining.map((b) => b.minY))
-  const maxY = Math.max(...remaining.map((b) => b.maxY))
-  const croppedHeight = maxY - minY
-  if (!Number.isFinite(croppedHeight) || croppedHeight < 8) return stripped
-  if (minY <= viewY + 1) return stripped
+  const minY = Math.min(...remaining.map((b) => b.minY));
+  const maxY = Math.max(...remaining.map((b) => b.maxY));
+  const croppedHeight = maxY - minY;
+  if (!Number.isFinite(croppedHeight) || croppedHeight < 8) return stripped;
+  if (minY <= viewY + 1) return stripped;
 
-  const nextBox = `${box[0]} ${minY} ${box[2]} ${croppedHeight}`
-  stripped = stripped.replace(viewBoxMatch[0], `viewBox="${nextBox}"`)
+  const nextBox = `${box[0]} ${minY} ${box[2]} ${croppedHeight}`;
+  stripped = stripped.replace(viewBoxMatch[0], `viewBox="${nextBox}"`);
   return stripped.replace(
     /(<svg\b[^>]*\bheight=")([^"]+)(")/i,
     `$1${croppedHeight}$3`,
-  )
+  );
+}
+
+function isBlackStroke(stroke: string | undefined): boolean {
+  if (!stroke) return false;
+  const value = stroke.trim().toLowerCase();
+  return value === "#000" || value === "#000000" || value === "black";
+}
+
+function parseHexColor(color: string): [number, number, number] | null {
+  const match = color.trim().match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+  if (!match) return null;
+  let hex = match[1];
+  if (hex.length === 3) {
+    hex = hex[0] + hex[0] + hex[1] + hex[1] + hex[2] + hex[2];
+  }
+  return [
+    Number.parseInt(hex.slice(0, 2), 16),
+    Number.parseInt(hex.slice(2, 4), 16),
+    Number.parseInt(hex.slice(4, 6), 16),
+  ];
+}
+
+function toHexColor(r: number, g: number, b: number): string {
+  const byte = (n: number) =>
+    Math.max(0, Math.min(255, Math.round(n)))
+      .toString(16)
+      .padStart(2, "0");
+  return `#${byte(r)}${byte(g)}${byte(b)}`;
+}
+
+function seamColorForFill(fill: string | undefined): string {
+  const rgb = fill ? parseHexColor(fill) : null;
+  if (!rgb) return "#5a1e22";
+  const [r, g, b] = rgb;
+  const luma = 0.299 * r + 0.587 * g + 0.114 * b;
+  // Ten's white cubes need a grey groove, not a washed-out off-white.
+  if (luma > 210) return "#4d4d4d";
+  return toHexColor(r * 0.45, g * 0.45, b * 0.45);
+}
+
+type CubePath = {
+  width: number;
+  height: number;
+  fill: string | undefined;
+};
+
+/**
+ * Groove width as a fraction of one cube.
+ * 0.04 is a thin seam; raise toward 0.08 for a heavier grid.
+ */
+export const BLOCK_SEAM_THICKNESS = 0.02;
+
+/**
+ * Scratch cube paths already have `stroke="#000000"`, but the painting
+ * layer sets `stroke-width="0"`, so 2×2 Four (and the rest) reads as one
+ * solid slab. Restore a groove on every unit square so the blocks can be
+ * counted.
+ */
+export function separateBlockSeams(svg: string): string {
+  const pathRe = /<path\b([^>]*)>/gi;
+  const cubes: CubePath[] = [];
+
+  for (const match of svg.matchAll(pathRe)) {
+    const cube = cubeFromAttrs(match[1]);
+    if (cube) cubes.push(cube);
+  }
+  if (cubes.length === 0) return svg;
+
+  const hist = new Map<number, number>();
+  for (const cube of cubes) {
+    const bin = Math.round(((cube.width + cube.height) / 2) * 2) / 2;
+    hist.set(bin, (hist.get(bin) ?? 0) + 1);
+  }
+
+  let unit = 0;
+  let votes = 0;
+  for (const [bin, count] of hist) {
+    if (count > votes || (count === votes && bin > unit)) {
+      unit = bin;
+      votes = count;
+    }
+  }
+  if (unit < 2) return svg;
+
+  const atUnit = cubes.filter(
+    (cube) =>
+      Math.abs(cube.width - unit) <= unit * 0.08 &&
+      Math.abs(cube.height - unit) <= unit * 0.08,
+  );
+  const hollowAtUnit = atUnit.filter(
+    (cube) => cube.fill === "none" || cube.fill === undefined,
+  ).length;
+  const allowHollow = hollowAtUnit >= 9;
+
+  const strokeWidth = unit * BLOCK_SEAM_THICKNESS;
+
+  return svg.replace(pathRe, (full, attrs: string) => {
+    const cube = cubeFromAttrs(attrs);
+    if (
+      !cube ||
+      Math.abs(cube.width - unit) > unit * 0.08 ||
+      Math.abs(cube.height - unit) > unit * 0.08
+    ) {
+      return full;
+    }
+
+    if ((cube.fill === "none" || cube.fill === undefined) && !allowHollow) {
+      return full;
+    }
+
+    const seam = seamColorForFill(cube.fill);
+    let next = attrs;
+    if (/\bstroke-width\s*=/.test(next)) {
+      next = next.replace(
+        /\bstroke-width\s*=\s*"[^"]*"/i,
+        `stroke-width="${strokeWidth.toFixed(3)}"`,
+      );
+    } else if (/\bstroke\s*=/.test(next)) {
+      next = next.replace(
+        /\bstroke\s*=\s*"[^"]*"/i,
+        (stroke) => `${stroke} stroke-width="${strokeWidth.toFixed(3)}"`,
+      );
+    } else {
+      next += ` stroke-width="${strokeWidth.toFixed(3)}"`;
+    }
+
+    if (/\bstroke\s*=/.test(next)) {
+      next = next.replace(/\bstroke\s*=\s*"[^"]*"/i, `stroke="${seam}"`);
+    } else {
+      next += ` stroke="${seam}"`;
+    }
+
+    return `<path${next}>`;
+  });
+}
+
+function cubeFromAttrs(attrs: string): CubePath | null {
+  const d = attrs.match(/\bd\s*=\s*"([^"]+)"/i)?.[1];
+  const fill = attrs.match(/\bfill\s*=\s*"([^"]+)"/i)?.[1];
+  const stroke = attrs.match(/\bstroke\s*=\s*"([^"]+)"/i)?.[1];
+  if (!d) return null;
+  if (fill?.startsWith("url(") || isBlackFill(fill)) return null;
+
+  const bounds = pathBBox(d);
+  if (!bounds) return null;
+  const width = bounds.maxX - bounds.minX;
+  const height = bounds.maxY - bounds.minY;
+  const size = Math.max(width, height);
+  const minSide = Math.min(width, height);
+  if (size < 2 || minSide <= 0 || size / minSide > 1.08) return null;
+
+  const solid = Boolean(fill && fill !== "none");
+  // Hundred's 10×10 is fill="none" squares over a parent fill.
+  if (solid && !isBlackStroke(stroke)) return null;
+
+  return { width, height, fill };
 }
 
 const UNDER_TWENTY = [
@@ -453,7 +625,7 @@ const UNDER_TWENTY = [
   "Seventeen",
   "Eighteen",
   "Nineteen",
-] as const
+] as const;
 
 const TENS_NAMES = [
   "",
@@ -466,19 +638,19 @@ const TENS_NAMES = [
   "Seventy",
   "Eighty",
   "Ninety",
-] as const
+] as const;
 
 function officialCostumeName(number: number): string | null {
-  if (number === 100) return "One Hundred"
-  if (number >= 0 && number < 20) return UNDER_TWENTY[number]
-  if (number < 0 || number > 100) return null
+  if (number === 100) return "One Hundred";
+  if (number >= 0 && number < 20) return UNDER_TWENTY[number];
+  if (number < 0 || number > 100) return null;
 
-  const tens = Math.floor(number / 10)
-  const ones = number % 10
-  const tensName = TENS_NAMES[tens]
-  if (!tensName) return null
-  if (ones === 0) return tensName
-  return `${tensName}-${UNDER_TWENTY[ones]}`
+  const tens = Math.floor(number / 10);
+  const ones = number % 10;
+  const tensName = TENS_NAMES[tens];
+  if (!tensName) return null;
+  if (ones === 0) return tensName;
+  return `${tensName}-${UNDER_TWENTY[ones]}`;
 }
 
 /** Values that have a named official costume in the Scratch pack. */
@@ -486,46 +658,49 @@ export const OFFICIAL_NUMBERBLOCK_VALUES = [
   100, 90, 81, 80, 72, 70, 64, 63, 60, 56, 55, 54, 50, 49, 48, 45, 42, 40, 39,
   38, 37, 36, 35, 34, 33, 32, 31, 30, 29, 28, 27, 26, 25, 24, 23, 22, 21, 20,
   19, 18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0,
-] as const
+] as const;
 
-const OFFICIAL_VALUE_SET = new Set<number>(OFFICIAL_NUMBERBLOCK_VALUES)
+const OFFICIAL_VALUE_SET = new Set<number>(OFFICIAL_NUMBERBLOCK_VALUES);
 
 /**
  * Split a number into official Numberblock characters.
  * 101 → One Hundred + One, not the generated 1-cube.
  */
 export function splitOfficialAddends(value: number): number[] {
-  if (!Number.isInteger(value) || value < 0) return []
-  if (value === 0) return [0]
-  if (OFFICIAL_VALUE_SET.has(value)) return [value]
+  if (!Number.isInteger(value) || value < 0) return [];
+  if (value === 0) return [0];
+  if (OFFICIAL_VALUE_SET.has(value)) return [value];
 
-  const parts: number[] = []
-  let rest = value
+  const parts: number[] = [];
+  let rest = value;
   for (const piece of OFFICIAL_NUMBERBLOCK_VALUES) {
-    if (piece === 0) continue
+    if (piece === 0) continue;
     while (rest >= piece) {
-      parts.push(piece)
-      rest -= piece
+      parts.push(piece);
+      rest -= piece;
     }
   }
-  return parts
+  return parts;
 }
 
 function viewBoxSize(svg: string): { width: number; height: number } {
-  const match = svg.match(/viewBox\s*=\s*"([^"]+)"/i)
-  if (!match) return { width: 1, height: 1 }
-  const box = match[1].trim().split(/[\s,]+/).map(Number)
+  const match = svg.match(/viewBox\s*=\s*"([^"]+)"/i);
+  if (!match) return { width: 1, height: 1 };
+  const box = match[1]
+    .trim()
+    .split(/[\s,]+/)
+    .map(Number);
   if (box.length !== 4 || box.some((n) => !Number.isFinite(n) || n <= 0)) {
-    return { width: 1, height: 1 }
+    return { width: 1, height: 1 };
   }
-  return { width: box[2], height: box[3] }
+  return { width: box[2], height: box[3] };
 }
 
 export type NumberblockAsset = {
-  url: string
-  width: number
-  height: number
-}
+  url: string;
+  width: number;
+  height: number;
+};
 
 function toBigInt(value: number | bigint | string): bigint {
   if (typeof value === "bigint") return value;
@@ -555,6 +730,10 @@ export class ScratchSb3Assets {
 
   private targets = new Map<string, ScratchTarget>();
   private costumes = new Map<string, Map<string, ScratchCostume>>();
+  private soundsByName = new Map<string, ScratchSound>();
+  private decodedSounds = new Map<string, AudioBuffer>();
+  private audioContext?: AudioContext;
+  private playingSources = new Set<AudioBufferSourceNode>();
 
   /**
    * Several Scratch costumes can point to the same md5ext.
@@ -614,6 +793,12 @@ export class ScratchSb3Assets {
       }
 
       this.costumes.set(target.name, targetCostumes);
+
+      for (const sound of target.sounds ?? []) {
+        if (sound.md5ext && !this.soundsByName.has(sound.name)) {
+          this.soundsByName.set(sound.name, sound);
+        }
+      }
     }
   }
 
@@ -670,29 +855,121 @@ export class ScratchSb3Assets {
     return costume;
   }
 
-  async hasCostume(
-    targetName: string,
-    costumeName: string,
-  ): Promise<boolean> {
+  async hasCostume(targetName: string, costumeName: string): Promise<boolean> {
     await this.load();
     return this.costumes.get(targetName)?.has(costumeName) ?? false;
   }
 
-  private async getZipAsset(costume: ScratchCostume): Promise<JSZipObject> {
+  private async getZipFile(md5ext: string): Promise<JSZipObject> {
     await this.load();
 
     if (!this.zip) {
       throw new Error("Scratch ZIP was not loaded.");
     }
 
-    const file = this.zip.file(costume.md5ext);
+    const file = this.zip.file(md5ext);
     if (!file) {
-      throw new Error(
-        `Asset "${costume.md5ext}" for costume "${costume.name}" was not found in the .sb3.`,
-      );
+      throw new Error(`Asset "${md5ext}" was not found in the .sb3.`);
     }
 
     return file;
+  }
+
+  private async getZipAsset(costume: ScratchCostume): Promise<JSZipObject> {
+    return this.getZipFile(costume.md5ext);
+  }
+
+  /**
+   * Blob URL for a named Scratch sound (Stage names win).
+   * `pop` is the merge click; `n7` is the spoken “seven”.
+   */
+  async getSoundUrl(soundName: string): Promise<string | null> {
+    await this.load();
+    const sound = this.soundsByName.get(soundName);
+    if (!sound) return null;
+
+    const cacheKey = `sound:${sound.md5ext}`;
+    const cached = this.blobUrlCache.get(cacheKey);
+    if (cached) return cached;
+
+    const file = await this.getZipFile(sound.md5ext);
+    const bytes = await file.async("arraybuffer");
+    const mime =
+      sound.dataFormat.toLowerCase() === "mp3" ? "audio/mpeg" : "audio/wav";
+    const url = URL.createObjectURL(new Blob([bytes], { type: mime }));
+    this.blobUrlCache.set(cacheKey, url);
+    return url;
+  }
+
+  async playSound(soundName: string): Promise<void> {
+    await this.load();
+    const sound = this.soundsByName.get(soundName);
+    if (!sound) return;
+
+    const ctx = this.getAudioContext();
+    if (ctx.state === "suspended") {
+      await ctx.resume().catch(() => undefined);
+    }
+
+    const buffer = await this.decodeSound(soundName, sound);
+    if (!buffer) return;
+
+    await new Promise<void>((resolve) => {
+      const source = ctx.createBufferSource();
+      source.buffer = buffer;
+      source.connect(ctx.destination);
+      const finish = () => {
+        this.playingSources.delete(source);
+        resolve();
+      };
+      source.addEventListener("ended", finish);
+      this.playingSources.add(source);
+      try {
+        source.start(0);
+      } catch {
+        finish();
+      }
+    });
+  }
+
+  async playNumberName(value: number): Promise<void> {
+    if (!Number.isInteger(value) || value < 0) return;
+    await this.playSound(`n${value}`);
+  }
+
+  /** Call from a tap/key so AudioContext is already running when the merge plays. */
+  async unlockAudio(): Promise<void> {
+    const ctx = this.getAudioContext();
+    if (ctx.state === "suspended") {
+      await ctx.resume().catch(() => undefined);
+    }
+  }
+
+  private getAudioContext(): AudioContext {
+    if (!this.audioContext) {
+      this.audioContext = new AudioContext();
+    }
+    return this.audioContext;
+  }
+
+  private async decodeSound(
+    soundName: string,
+    sound: ScratchSound,
+  ): Promise<AudioBuffer | null> {
+    const cached = this.decodedSounds.get(soundName);
+    if (cached) return cached;
+
+    const file = await this.getZipFile(sound.md5ext);
+    const bytes = await file.async("arraybuffer");
+    try {
+      const buffer = await this.getAudioContext().decodeAudioData(
+        bytes.slice(0),
+      );
+      this.decodedSounds.set(soundName, buffer);
+      return buffer;
+    } catch {
+      return null;
+    }
   }
 
   /**
@@ -734,7 +1011,8 @@ export class ScratchSb3Assets {
 
     const file = await this.getZipAsset(costume);
     const svg = normalizeScratchSvg(await file.async("string"));
-    return options.keepNumeral ? svg : stripCostumeNumeral(svg);
+    const prepared = options.keepNumeral ? svg : stripCostumeNumeral(svg);
+    return separateBlockSeams(prepared);
   }
 
   /**
@@ -756,7 +1034,7 @@ export class ScratchSb3Assets {
       );
     }
 
-    const cacheKey = `${costume.md5ext}:${options.keepNumeral ? "raw" : "stripped"}`
+    const cacheKey = `${costume.md5ext}:${options.keepNumeral ? "raw" : "stripped"}`;
     const cached = this.blobUrlCache.get(cacheKey);
     if (cached) return cached;
 
@@ -795,8 +1073,8 @@ export class ScratchSb3Assets {
     number: number,
     options: { keepNumeral?: boolean } = {},
   ): Promise<string> {
-    const asset = await this.getNumberblockAsset(number, options)
-    return asset.url
+    const asset = await this.getNumberblockAsset(number, options);
+    return asset.url;
   }
 
   async getNumberblockAsset(
@@ -804,34 +1082,34 @@ export class ScratchSb3Assets {
     options: { keepNumeral?: boolean } = {},
   ): Promise<NumberblockAsset> {
     if (!Number.isInteger(number) || number < 0) {
-      throw new Error(`Expected a non-negative integer, got ${number}.`)
+      throw new Error(`Expected a non-negative integer, got ${number}.`);
     }
 
-    const official = await this.resolveOfficialCostume(number)
+    const official = await this.resolveOfficialCostume(number);
     if (official) {
-      return this.loadAsset(OFFICIAL_TARGET, official, options)
+      return this.loadAsset(OFFICIAL_TARGET, official, options);
     }
 
     if (number <= 99) {
-      return this.loadAsset("NBs//Ten + One", `n${number}`, options)
+      return this.loadAsset("NBs//Ten + One", `n${number}`, options);
     }
 
     throw new Error(
       `No single Numberblock costume for ${number}. Use getNumberblockFigure().`,
-    )
+    );
   }
 
   async getNumberblockFigure(
     number: number,
     options: { keepNumeral?: boolean } = {},
   ): Promise<NumberblockAsset[]> {
-    const parts = splitOfficialAddends(number)
+    const parts = splitOfficialAddends(number);
     if (parts.length === 0) {
-      throw new Error(`No Numberblock visual for ${number}.`)
+      throw new Error(`No Numberblock visual for ${number}.`);
     }
     return Promise.all(
       parts.map((part) => this.getNumberblockAsset(part, options)),
-    )
+    );
   }
 
   private async loadAsset(
@@ -839,18 +1117,18 @@ export class ScratchSb3Assets {
     costumeName: string,
     options: { keepNumeral?: boolean } = {},
   ): Promise<NumberblockAsset> {
-    const costume = await this.getCostume(targetName, costumeName)
-    const cacheKey = `${costume.md5ext}:${options.keepNumeral ? "raw" : "stripped"}`
-    const svg = await this.getSvgText(targetName, costumeName, options)
-    const size = viewBoxSize(svg)
-    const cached = this.blobUrlCache.get(cacheKey)
-    if (cached) return { url: cached, ...size }
+    const costume = await this.getCostume(targetName, costumeName);
+    const cacheKey = `${costume.md5ext}:${options.keepNumeral ? "raw" : "stripped"}`;
+    const svg = await this.getSvgText(targetName, costumeName, options);
+    const size = viewBoxSize(svg);
+    const cached = this.blobUrlCache.get(cacheKey);
+    if (cached) return { url: cached, ...size };
 
     const url = URL.createObjectURL(
       new Blob([svg], { type: "image/svg+xml;charset=utf-8" }),
-    )
-    this.blobUrlCache.set(cacheKey, url)
-    return { url, ...size }
+    );
+    this.blobUrlCache.set(cacheKey, url);
+    return { url, ...size };
   }
 
   private async resolveOfficialCostume(number: number): Promise<string | null> {
@@ -954,9 +1232,7 @@ export class ScratchSb3Assets {
    * Build a lightweight metadata index for debugging/tools.
    * This does not decompress any actual image files.
    */
-  async buildSvgIndex(): Promise<
-    Record<string, Record<string, SvgAssetRef>>
-  > {
+  async buildSvgIndex(): Promise<Record<string, Record<string, SvgAssetRef>>> {
     await this.load();
 
     const result: Record<string, Record<string, SvgAssetRef>> = {};

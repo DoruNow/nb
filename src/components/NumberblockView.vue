@@ -91,9 +91,10 @@ onUnmounted(() => {
 <style scoped>
 .nb {
   display: flex;
-  align-items: flex-end;
-  justify-content: center;
-  gap: 0.2em;
+  flex-direction: column-reverse;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.12em;
   width: 100%;
   height: 100%;
   min-height: 0;

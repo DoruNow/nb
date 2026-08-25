@@ -58,8 +58,8 @@ export function figureUnits(parts: number[]): { wide: number; tall: number } {
   const units = parts.map(blockUnits)
   const gap = PART_GAP * Math.max(0, parts.length - 1)
   return {
-    wide: units.reduce((sum, unit) => sum + unit.wide, 0) + gap,
-    tall: Math.max(...units.map((unit) => unit.tall)),
+    wide: Math.max(...units.map((unit) => unit.wide)),
+    tall: units.reduce((sum, unit) => sum + unit.tall, 0) + gap,
   }
 }
 
