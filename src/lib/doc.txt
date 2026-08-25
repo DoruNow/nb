@@ -1,0 +1,454 @@
+Numberblocks Math App
+
+Product and MVP Specification - private family-use web app
+
+Current MVP: A child builds an addition equation in the fixed form input + input = input using digits 0-9. Each filled input immediately displays the matching Numberblock visual. Keyboard and on-screen number selection are both supported.
+
+1. Product Definition
+
+The product is a maths-first Numberblocks app. It is not intended to create stories or episodes. The familiar characters and rules of the Numberblocks universe are used as the visual and conceptual language for mathematics.
+
+The long-term goal is to support the kinds of mathematical transformations that Numberblocks perform in their universe - addition, subtraction, multiplication, division, composition, decomposition, place-value growth, and related visual maths interactions - while keeping the interface simple enough for a young child to operate independently.
+
+2. Product Principles
+
+Math first. Every interaction should serve a mathematical action or its visual explanation.
+
+Recognizable characters matter. The Numberblock visual is not decoration; it is the concrete representation of the number.
+
+Minimal UI. Avoid reward systems, navigation chrome, story controls, unnecessary calls to action, and decorative game mechanics.
+
+Direct manipulation. The child chooses the mathematical field, then enters a number by keyboard or by tapping the bottom number row.
+
+Visual continuity. The numeral and the Numberblock representation stay visibly linked.
+
+Expandable foundations. MVP code should be simple, but components and data structures should not assume the app will always stop at 9 or at addition.
+
+
+Numberblocks Math App - MVP Specification - 25 Aug 2026
+
+3. MVP - Locked Scope
+
+Area
+
+MVP decision
+
+Expression
+
+Fixed pattern: input + input = input
+
+Operation
+
+Addition only
+
+Values
+
+Digits 0 through 9
+
+Input methods
+
+Physical keyboard or bottom number row
+
+Number visuals
+
+Each filled field shows its corresponding Numberblock
+
+Correct answer feedback
+
+Answer Numberblock jumps a few pixels
+
+Controls
+
+Undo and Clear
+
+Place-value UI
+
+Not present in MVP
+
+Story/game UI
+
+Not present
+
+4. MVP Screen Structure
+
+The screen has three visual bands. The hierarchy should remain obvious even when the app later supports larger numbers.
+
+Band
+
+Purpose
+
+Design rule
+
+Top
+
+Mathematical notation
+
+Large, readable input + input = input. One slot is active at a time.
+
+Middle
+
+Numberblock representation
+
+Largest area. Shows the characters corresponding to all filled slots.
+
+Bottom
+
+Input controls
+
+Always-visible 0-9 number row, plus subtle Undo, Clear, and keyboard hint.
+
+5. Input Interaction
+
+1.   A field is active. On a fresh equation the left input is active by default.
+
+2.   The child presses a number key or taps a number in the bottom row.
+
+3.   That numeral appears in the active mathematical field and the matching Numberblock appears in the visual area.
+
+4.   Focus advances to the next logical field: left input -> right input -> answer.
+
+5.   When the answer field is filled, the app evaluates the equation.
+
+6.   If the result is correct, the answer Numberblock performs a small vertical jump of only a few pixels.
+
+7.   Undo reverses the most recent input action. Clear resets the entire equation.
+
+No separate submit action: Entering the answer is the submit action. The MVP does not need a Check, Build, or Confirm button.
+
+6. Field and Focus Rules
+
+Only one field is active at a time.
+
+The active field has a clear but calm visual highlight.
+
+Clicking an already-filled field makes it active so its value can be replaced.
+
+Keyboard input always targets the currently active field.
+
+Tapping a bottom-row number performs the same action as pressing that number on the keyboard.
+
+Each field has two synchronized views: the written numeral in the top row and the matching Numberblock in the middle row.
+
+Empty fields reserve enough space that the equation does not visibly collapse while it is being filled.
+
+7. Number Size and Responsive Growth
+
+Although the MVP accepts only 0-9, the visual system must already be designed so larger values remain attractive later. A value such as 30 must not look like an oversized digit forced into a one-digit box.
+
+Input slots use a minimum width, not a fixed width.
+
+The slot grows horizontally as the numeral gains digits: 7 -> 17 -> 30 -> 100 -> larger values.
+
+Typography scales conservatively. Prefer widening the slot before shrinking the numeral.
+
+The equation row is content-driven and can redistribute horizontal space between slots and operators.
+
+The Numberblock visual area uses the available stage dimensions rather than a fixed sprite width or height.
+
+Large Numberblocks preserve aspect ratio and visual character proportions. They may scale down as a group to fit the stage, but they should not be stretched.
+
+The layout should handle visually wide or tall Numberblocks. The visual representation of 30, 50, or 100 may have different geometry from a single-digit character.
+
+On smaller screens, the visual stage may scale the whole equation composition while the input controls remain comfortably tappable.
+
+8. Numberblock Asset System
+
+The Scratch .sb3 project is retained as a project asset and used as the source of Numberblock visuals. The app does not need hundreds of manually imported SVG files.
+
+The .sb3 is a ZIP-based Scratch project containing project.json plus SVG, PNG, and audio assets.
+
+JSZip loads the .sb3 in the browser.
+
+project.json maps human-readable Scratch target/costume names to hashed asset filenames.
+
+SVG assets are decompressed only when requested and converted to cached Blob URLs.
+
+The app can request a direct Numberblock visual or later compose larger values from the relevant Scratch costume groups.
+
+The UI layer should not know Scratch target names. A small asset service should hide that implementation detail.
+
+9. Recommended Technology
+
+Technology
+
+Role
+
+Reason
+
+Vue 3
+
+UI framework
+
+Simple component model and a good fit for the intended app structure.
+
+TypeScript
+
+Application logic
+
+Keeps number, field, operation, and asset contracts explicit as features grow.
+
+Vite
+
+Development/build
+
+Minimal setup and fast local development for a private static app.
+
+JSZip
+
+.sb3 access
+
+Reads project.json and extracts individual assets from the Scratch package on demand.
+
+CSS
+
+Layout/animation
+
+Enough for responsive slot growth and the MVP answer jump; no animation framework is needed.
+
+10. Proposed Application Structure
+
+src/
+  components/
+    MathEquation.vue
+    MathInput.vue
+    NumberblockStage.vue
+    NumberblockView.vue
+    NumberKeyboard.vue
+  lib/
+    numberblocksSb3.ts
+    math.ts
+  model/
+    equation.ts
+  App.vue
+public/
+  assets/
+    Numberblocks Generator.sb3
+
+11. Component Responsibilities
+
+Component
+
+Responsibility
+
+MathEquation
+
+Owns the visible mathematical notation and active-field highlighting.
+
+MathInput
+
+Reusable numeric slot. Displays value, accepts focus, and expands to fit larger numbers.
+
+NumberblockStage
+
+Lays out the large Numberblock visuals and + / = relationships in the middle area.
+
+NumberblockView
+
+Loads and displays one Numberblock representation from the asset service.
+
+NumberKeyboard
+
+Bottom 0-9 row. Emits the same input event as a physical keyboard number key.
+
+numberblocksSb3
+
+Loads the .sb3, indexes costumes, resolves SVGs, and caches generated URLs.
+
+math
+
+Pure functions for evaluating expressions and later operations.
+
+equation model
+
+Holds operands, answer, active field, operation, and undoable input state.
+
+12. MVP State Model
+
+The MVP state can stay deliberately small. The important decision is to represent the equation structurally rather than as one formatted string.
+
+type FieldId = 'left' | 'right' | 'answer'
+
+interface EquationState {
+  left: number | null
+  right: number | null
+  answer: number | null
+  operation: '+'
+  activeField: FieldId
+}
+
+This structure can later evolve to support multi-digit values and additional operators without rewriting the input system.
+
+13. Correctness Feedback
+
+Correctness is evaluated as soon as the answer is entered.
+
+Correct answer: animate only the answer Numberblock with a tiny vertical jump.
+
+The MVP does not require points, stars, confetti, sound, celebration text, or a separate success screen.
+
+The visual feedback should be understandable without interrupting play or requiring another click.
+
+Wrong-answer behavior should remain restrained. The MVP specification does not require a punishment animation; the entered answer can remain editable.
+
+14. Undo and Clear
+
+These are the only secondary controls on the MVP screen.
+
+Control
+
+Behavior
+
+Undo
+
+Reverts the most recent input/edit and restores the corresponding field focus and Numberblock visual.
+
+Clear
+
+Resets all three fields and returns focus to the left input.
+
+15. Visual Design Rules
+
+Use a soft, calm background and a stage-like middle area so the characters remain the visual focus.
+
+Keep typography large, rounded, and highly legible.
+
+Keep operators visually strong but secondary to the values.
+
+Use generous whitespace. Do not fill empty space with extra controls.
+
+Bottom number choices must be large enough for confident touch input.
+
+Each bottom choice contains both its numeral and a small corresponding Numberblock.
+
+The middle Numberblocks should be substantially larger than the bottom thumbnails.
+
+Avoid UI elements that imitate a reward-driven mobile game.
+
+16. Accessibility and Child Usability
+
+Keyboard and pointer input both work without changing modes.
+
+Active focus must be visually obvious.
+
+Clickable targets should remain large and separated.
+
+Do not rely on color alone to indicate the active field or selected number.
+
+Use native buttons for the bottom number row where practical, preserving keyboard focus and accessibility behavior.
+
+Respect reduced-motion preferences by disabling or minimizing the answer jump when requested by the operating system.
+
+17. Future Product Direction
+
+The MVP is intentionally narrow, but the app should be able to grow toward the wider Numberblocks maths universe without becoming a collection of unrelated mini-games.
+
+Future capability
+
+Design implication now
+
+Larger numbers
+
+MathInput expands by content; NumberblockStage scales and composes larger representations.
+
+Subtraction
+
+Operation is data, not hardcoded presentation logic.
+
+Multiplication
+
+Stage must support arrays/groups and multiple equivalent representations.
+
+Division
+
+Stage must support splitting/grouping Numberblocks.
+
+Composition/decomposition
+
+Asset and state layers should support one number becoming multiple Numberblocks and vice versa.
+
+Hundreds/thousands+
+
+Do not bind visual components to a 0-9 catalog even though the MVP keyboard is 0-9.
+
+Lore-specific forms
+
+Asset service should support alternate costumes/poses/representations without changing math components.
+
+Animation
+
+Keep animations as small effects attached to mathematical events, not as a separate game engine.
+
+18. Architecture Principle for Expansion
+
+New mathematics should be added by extending the model of an equation or transformation, then teaching the visual stage how to represent it. Avoid building a separate bespoke screen for every mathematical idea.
+
+math state / transformation
+          |
+          v
+mathematical notation
+          +
+Numberblock visual representation
+          +
+shared input controls
+
+19. MVP Acceptance Criteria
+
+The app opens to input + input = input.
+
+A child can fill each field by keyboard or by tapping 0-9.
+
+Each filled field immediately produces the correct corresponding Numberblock visual.
+
+Focus automatically moves through the three fields and can also be changed by clicking a field.
+
+The app evaluates the answer immediately when entered.
+
+A correct answer makes the answer Numberblock jump a few pixels.
+
+Undo works one input step at a time.
+
+Clear returns the app to the initial empty state.
+
+No unnecessary controls or reward UI are present.
+
+The layout is implemented with content-driven sizing so future values such as 30 can fit naturally without redesigning the input component.
+
+20. Explicit Non-Goals for MVP
+
+No story mode.
+
+No user accounts or cloud persistence.
+
+No score, lives, stars, streaks, badges, or reward economy.
+
+No operation selector.
+
+No place-value category selector.
+
+No tens/hundreds input workflow yet.
+
+No complex animation framework.
+
+No backend requirement.
+
+No public deployment requirement.
+
+21. Immediate Build Order
+
+1.   Keep the existing .sb3 asset mapper working and isolate it behind NumberblockView.
+
+2.   Build MathInput with active focus and content-driven width.
+
+3.   Build NumberKeyboard with 0-9 thumbnails and keyboard parity.
+
+4.   Build the three-field MathEquation flow.
+
+5.   Build NumberblockStage and connect each field value to its character.
+
+6.   Add evaluation and the small correct-answer jump.
+
+7.   Add Undo and Clear.
+
+8.   Test layout at 0, 1, 7, 9 and with temporary larger values such as 17 and 30 to verify that sizing assumptions are future-safe.
+
+Definition of a good MVP: The child can sit down, understand where to enter numbers without instruction, build a simple addition equation, see the matching Numberblocks, and receive immediate visual confirmation when the answer is correct. Everything else can wait.

@@ -1,0 +1,52 @@
+:root {
+  --sans: Nunito, "Segoe UI Rounded", "Avenir Next Rounded", ui-rounded, system-ui,
+    sans-serif;
+  --wall: #f6edd9;
+  --floor: #ddc197;
+  --ink: #1a1a1a;
+
+  font: 18px/1.3 var(--sans);
+  color: var(--ink);
+  color-scheme: light;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: var(--wall);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  margin: 0;
+  height: 100%;
+  min-height: 100%;
+}
+
+body {
+  min-height: 100svh;
+}
+
+button {
+  font-family: inherit;
+}
+
+.trio {
+  display: grid;
+  grid-template-columns:
+    minmax(0, 1fr)
+    auto
+    minmax(0, 1fr)
+    auto
+    minmax(0, 1fr);
+  align-items: end;
+  justify-items: center;
+  gap: clamp(0.4rem, 1.6vw, 1.1rem);
+  width: min(1100px, 100%);
+}
