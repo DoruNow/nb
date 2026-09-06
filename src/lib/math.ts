@@ -32,3 +32,9 @@ export function isCorrect(
   if (operations.length !== terms.length - 1) return null
   return evaluate(terms as number[], operations) === answer
 }
+
+export const COUNT_LENGTH = 10
+
+export function multiple(step: number, k: number): number {
+  return step * k
+}

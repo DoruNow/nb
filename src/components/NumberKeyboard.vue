@@ -4,12 +4,16 @@ import NumberblockView from "./NumberblockView.vue"
 
 const DIGITS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9] as const
 
-defineProps<{
-  canUndo: boolean
-  canOperator: boolean
-  canEquals: boolean
-  pendingOperator: Operation | null
-}>()
+withDefaults(
+  defineProps<{
+    canUndo: boolean
+    canOperator: boolean
+    canEquals: boolean
+    pendingOperator: Operation | null
+    showOperators?: boolean
+  }>(),
+  { showOperators: true },
+)
 
 const emit = defineEmits<{
   digit: [value: number]
@@ -80,7 +84,7 @@ const emit = defineEmits<{
       </button>
     </div>
 
-    <div class="ops" role="group" aria-label="Operations">
+    <div v-if="showOperators" class="ops" role="group" aria-label="Operations">
       <button
         type="button"
         class="op-key plus"
@@ -132,7 +136,11 @@ const emit = defineEmits<{
           d="M7 15h10"
         />
       </svg>
-      Type a number, then + or −. The = key is +. Space for =
+      {{
+        showOperators
+          ? "Type a number, then + or −. The = key is +. Space for ="
+          : "Type the next number"
+      }}
     </p>
   </div>
 </template>

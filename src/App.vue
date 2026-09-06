@@ -1,48 +1,90 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted } from "vue"
+import { computed, onMounted, onUnmounted, ref } from "vue"
+import CountSequence from "./components/CountSequence.vue"
 import MathEquation from "./components/MathEquation.vue"
 import NumberKeyboard from "./components/NumberKeyboard.vue"
 import { numberblocksAssets } from "./lib/numberblocksSb3"
 import { unlockSpeech } from "./lib/speak"
 import { useEquation } from "./model/equation"
+import { useCount } from "./model/count"
 import type { Operation } from "./lib/math"
 
+type Mode = "add" | "count"
+
+const mode = ref<Mode>("add")
+
 const {
-  columns,
-  operators,
-  activeField,
-  correct,
-  canUndo,
+  columns: addColumns,
+  operators: addOperators,
+  activeField: addActiveField,
+  correct: addCorrect,
+  canUndo: addCanUndo,
   canOperator,
   canEquals,
   pendingOperator,
-  applyDigit,
+  applyDigit: addDigit,
   applyOperator,
   applyEquals,
-  focus,
-  advance,
-  undo,
-  clear,
+  focus: addFocus,
+  advance: addAdvance,
+  undo: addUndo,
+  clear: addClear,
 } = useEquation()
+
+const {
+  columns: countColumns,
+  step: countStep,
+  activeIndex: countActiveIndex,
+  complete: countComplete,
+  canUndo: countCanUndo,
+  justLockedIndex,
+  applyDigit: countDigit,
+  undo: countUndo,
+  clear: countClear,
+} = useCount()
+
+const canUndo = computed(() =>
+  mode.value === "add" ? addCanUndo.value : countCanUndo.value,
+)
 
 function unlock() {
   void numberblocksAssets.unlockAudio()
   unlockSpeech()
 }
 
+function setMode(next: Mode) {
+  if (next === mode.value) return
+  mode.value = next
+  if (next === "add") addClear()
+  else countClear()
+}
+
 function onDigit(digit: number) {
   unlock()
-  applyDigit(digit)
+  if (mode.value === "count") countDigit(digit)
+  else addDigit(digit)
 }
 
 function onOperator(operation: Operation) {
+  if (mode.value !== "add") return
   unlock()
   applyOperator(operation)
 }
 
 function onEquals() {
+  if (mode.value !== "add") return
   unlock()
   applyEquals()
+}
+
+function onUndo() {
+  if (mode.value === "count") countUndo()
+  else addUndo()
+}
+
+function onClear() {
+  if (mode.value === "count") countClear()
+  else addClear()
 }
 
 function onKeydown(event: KeyboardEvent) {
@@ -51,7 +93,18 @@ function onKeydown(event: KeyboardEvent) {
   if (event.key >= "0" && event.key <= "9") {
     event.preventDefault()
     onDigit(Number(event.key))
-  } else if (
+    return
+  }
+
+  if (event.key === "Backspace") {
+    event.preventDefault()
+    onUndo()
+    return
+  }
+
+  if (mode.value === "count") return
+
+  if (
     event.key === "+" ||
     event.key === "=" ||
     event.key === "-" ||
@@ -64,7 +117,7 @@ function onKeydown(event: KeyboardEvent) {
     onEquals()
   } else if (event.key === "Tab") {
     event.preventDefault()
-    advance()
+    addAdvance()
   }
 }
 
@@ -79,13 +132,43 @@ onUnmounted(() => {
 
 <template>
   <div class="room">
+    <header class="modes" role="tablist" aria-label="Mode">
+      <button
+        type="button"
+        role="tab"
+        :aria-selected="mode === 'add'"
+        :class="{ on: mode === 'add' }"
+        @click="setMode('add')"
+      >
+        Add
+      </button>
+      <button
+        type="button"
+        role="tab"
+        :aria-selected="mode === 'count'"
+        :class="{ on: mode === 'count' }"
+        @click="setMode('count')"
+      >
+        Count
+      </button>
+    </header>
+
     <div class="playfield">
       <MathEquation
-        :columns="columns"
-        :operators="operators"
-        :active-field="activeField"
-        :correct="correct"
-        @focus="focus"
+        v-if="mode === 'add'"
+        :columns="addColumns"
+        :operators="addOperators"
+        :active-field="addActiveField"
+        :correct="addCorrect"
+        @focus="addFocus"
+      />
+      <CountSequence
+        v-else
+        :columns="countColumns"
+        :step="countStep"
+        :active-index="countActiveIndex"
+        :complete="countComplete"
+        :just-locked-index="justLockedIndex"
       />
     </div>
 
@@ -95,11 +178,12 @@ onUnmounted(() => {
         :can-operator="canOperator"
         :can-equals="canEquals"
         :pending-operator="pendingOperator"
+        :show-operators="mode === 'add'"
         @digit="onDigit"
         @operator="onOperator"
         @equals="onEquals"
-        @undo="undo"
-        @clear="clear"
+        @undo="onUndo"
+        @clear="onClear"
       />
     </footer>
   </div>
@@ -140,6 +224,33 @@ onUnmounted(() => {
   background-repeat: no-repeat;
 }
 
+.modes {
+  display: flex;
+  justify-content: center;
+  gap: 0.35rem;
+  padding: 0.65rem 1rem 0;
+}
+
+.modes button {
+  appearance: none;
+  margin: 0;
+  border: 0;
+  border-radius: 999px;
+  padding: 0.28rem 0.95rem;
+  background: transparent;
+  color: #7a746c;
+  font: inherit;
+  font-size: 1.05rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.modes button.on {
+  background: rgba(255, 255, 255, 0.78);
+  color: #1a1a1a;
+  box-shadow: 0 0 0 1px rgba(40, 20, 0, 0.06);
+}
+
 .band {
   display: flex;
   justify-content: center;
@@ -152,7 +263,7 @@ onUnmounted(() => {
   margin: 0;
   min-width: 0;
   min-height: 0;
-  padding: 1.4rem 1rem 0.2rem;
+  padding: 0.7rem 1rem 0.2rem;
 }
 
 .bottom {
