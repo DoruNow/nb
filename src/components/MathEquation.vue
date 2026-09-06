@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue"
-import type { FieldId } from "../model/equation"
+import type { Column, ColumnId } from "../model/equation"
+import type { Operation } from "../lib/math"
 import { blockScale } from "../lib/numberblockScale"
 import {
   numberblocksAssets,
   splitOfficialAddends,
 } from "../lib/numberblocksSb3"
+import { canSpeakNumber, cancelSpeech, speakOperator } from "../lib/speak"
 import MathInput from "./MathInput.vue"
 import NumberblockView from "./NumberblockView.vue"
 
@@ -20,64 +22,85 @@ type CloneBox = {
   dy: number
 }
 
-const emptyBox: CloneBox = {
-  left: 0,
-  bottom: 0,
-  width: 0,
-  height: 0,
-  dx: 0,
-  dy: 0,
-}
-
 const props = defineProps<{
-  left: number | null
-  right: number | null
-  answer: number | null
-  operation: string
-  activeField: FieldId
+  columns: Column[]
+  operators: Operation[]
+  activeField: ColumnId
   correct: boolean | null
 }>()
 
 const emit = defineEmits<{
-  focus: [field: FieldId]
+  focus: [field: ColumnId]
 }>()
 
 const root = ref<HTMLElement | null>(null)
-const leftFigure = ref<HTMLElement | null>(null)
-const rightFigure = ref<HTMLElement | null>(null)
-const answerFigure = ref<HTMLElement | null>(null)
 const availableHeight = ref(280)
 const columnWidth = ref(200)
 const clonesOn = ref(false)
 const flying = ref(false)
 const revealed = ref(false)
 const popping = ref(false)
-const leftBox = ref<CloneBox>({ ...emptyBox })
-const rightBox = ref<CloneBox>({ ...emptyBox })
+const speakingId = ref<ColumnId | null>(null)
+const speakingOp = ref<number | null>(null)
+const cloneBoxes = ref<CloneBox[]>([])
+const cloneValues = ref<(number | null)[]>([])
+let celebrateGen = 0
+
+const figureEls = new Map<string, HTMLElement>()
 
 let mergeTimer: ReturnType<typeof setTimeout> | undefined
 let popTimer: ReturnType<typeof setTimeout> | undefined
 let resize: ResizeObserver | undefined
 
+function setFigureRef(id: string, el: unknown) {
+  if (el instanceof HTMLElement) figureEls.set(id, el)
+  else figureEls.delete(id)
+}
+
 function partsFor(value: number | null) {
   return value === null ? [] : splitOfficialAddends(value)
 }
 
+const termColumns = computed(() =>
+  props.columns.filter((column) => column.kind === "term"),
+)
+
+const answerColumn = computed(
+  () => props.columns.find((column) => column.kind === "answer") ?? null,
+)
+
 const pxPerUnit = computed(() =>
   blockScale({
-    figures: [
-      partsFor(props.left),
-      partsFor(props.right),
-      partsFor(props.answer),
-    ],
+    figures: props.columns.map((column) => partsFor(column.value)),
     columnWidth: columnWidth.value,
     availableHeight: availableHeight.value,
   }),
 )
 
-const showAnswer = computed(
-  () => props.correct !== true || revealed.value,
+const showAnswer = computed(() => props.correct !== true || revealed.value)
+
+const gridTemplateColumns = computed(() =>
+  props.columns
+    .map((_, index) =>
+      index === 0
+        ? "minmax(min-content, 1fr)"
+        : "auto minmax(min-content, 1fr)",
+    )
+    .join(" "),
 )
+
+function symbolBefore(index: number): string {
+  const column = props.columns[index]
+  if (!column || column.kind === "answer") return "="
+  const operation = props.operators[index - 1]
+  return operation === "-" ? "−" : (operation ?? "+")
+}
+
+function slotLabel(column: Column, index: number): string {
+  if (column.kind === "answer") return "Answer"
+  if (index === 0) return "First number"
+  return `Number ${index + 1}`
+}
 
 function prefersReducedMotion() {
   return window.matchMedia("(prefers-reduced-motion: reduce)").matches
@@ -90,34 +113,39 @@ function clearTimers() {
   popTimer = undefined
 }
 
-function boxFrom(
-  source: DOMRect,
-  dest: DOMRect,
-  board: DOMRect,
-  side: "left" | "right",
-): CloneBox {
+function boxFrom(source: DOMRect, dest: DOMRect, board: DOMRect): CloneBox {
   const startCx = source.left + source.width / 2
   const destCx = dest.left + dest.width / 2
-  const touch = Math.min(28, source.width * 0.35)
-  const meetCx = side === "left" ? destCx - touch : destCx + touch
   return {
     left: source.left - board.left,
     bottom: board.bottom - source.bottom,
     width: source.width,
     height: source.height,
-    dx: meetCx - startCx,
+    dx: destCx - startCx,
     dy: dest.bottom - source.bottom,
   }
 }
 
 function measureClones() {
   const board = root.value?.getBoundingClientRect()
-  const left = leftFigure.value?.getBoundingClientRect()
-  const right = rightFigure.value?.getBoundingClientRect()
-  const dest = answerFigure.value?.getBoundingClientRect()
-  if (!board || !left || !right || !dest) return false
-  leftBox.value = boxFrom(left, dest, board, "left")
-  rightBox.value = boxFrom(right, dest, board, "right")
+  const destEl = answerColumn.value
+    ? figureEls.get(answerColumn.value.id)
+    : undefined
+  const dest = destEl?.getBoundingClientRect()
+  if (!board || !dest) return false
+
+  const boxes: CloneBox[] = []
+  const values: (number | null)[] = []
+  for (const column of termColumns.value) {
+    if (column.value === null) continue
+    const source = figureEls.get(column.id)?.getBoundingClientRect()
+    if (!source) continue
+    boxes.push(boxFrom(source, dest, board))
+    values.push(column.value)
+  }
+  if (boxes.length === 0) return false
+  cloneBoxes.value = boxes
+  cloneValues.value = values
   return true
 }
 
@@ -132,11 +160,61 @@ function cloneStyle(box: CloneBox) {
   }
 }
 
-async function celebrate() {
-  await numberblocksAssets.playSound("pop")
-  if (props.answer !== null) {
-    await numberblocksAssets.playNumberName(props.answer)
+function stillCelebrating(gen: number) {
+  return gen === celebrateGen
+}
+
+function sleep(ms: number) {
+  return new Promise<void>((resolve) => {
+    setTimeout(resolve, ms)
+  })
+}
+
+async function speakColumn(column: Column, gen: number) {
+  if (column.kind === "answer") popping.value = true
+  else speakingId.value = column.id
+
+  const value = column.value
+  if (value !== null && canSpeakNumber(value)) {
+    await numberblocksAssets.playNumberName(value)
+  } else {
+    await sleep(280)
   }
+
+  if (!stillCelebrating(gen)) return
+  speakingId.value = null
+  if (column.kind === "answer") {
+    popTimer = setTimeout(() => {
+      popping.value = false
+    }, 450)
+  }
+}
+
+async function celebrate() {
+  const gen = ++celebrateGen
+  await numberblocksAssets.playSound("pop")
+  if (!stillCelebrating(gen)) return
+
+  const terms = termColumns.value
+  const ops = props.operators
+  for (let i = 0; i < terms.length; i++) {
+    if (!stillCelebrating(gen)) return
+    if (i > 0) {
+      speakingOp.value = i
+      await speakOperator(ops[i - 1] === "-" ? "minus" : "plus")
+      if (!stillCelebrating(gen)) return
+      speakingOp.value = null
+    }
+    await speakColumn(terms[i], gen)
+  }
+
+  const answer = answerColumn.value
+  if (!answer || answer.value === null || !stillCelebrating(gen)) return
+  speakingOp.value = props.columns.indexOf(answer)
+  await speakOperator("equals")
+  if (!stillCelebrating(gen)) return
+  speakingOp.value = null
+  await speakColumn(answer, gen)
 }
 
 function finishMerge() {
@@ -182,11 +260,34 @@ async function runMerge() {
 }
 
 function resetMerge() {
+  celebrateGen += 1
+  cancelSpeech()
+  numberblocksAssets.stopAllSounds()
   clearTimers()
   clonesOn.value = false
   flying.value = false
   revealed.value = false
   popping.value = false
+  speakingId.value = null
+  speakingOp.value = null
+}
+
+function measureStage() {
+  const first = props.columns[0]
+  const figure = first ? figureEls.get(first.id) : undefined
+  if (!figure) return
+  availableHeight.value = Math.max(80, figure.clientHeight - 8)
+  columnWidth.value = Math.max(48, figure.clientWidth)
+}
+
+function observeStage() {
+  resize?.disconnect()
+  resize = new ResizeObserver(measureStage)
+  if (root.value) resize.observe(root.value)
+  const first = props.columns[0]
+  const figure = first ? figureEls.get(first.id) : undefined
+  if (figure) resize.observe(figure)
+  measureStage()
 }
 
 watch(
@@ -197,88 +298,77 @@ watch(
   },
 )
 
+watch(
+  () => props.columns.map((column) => column.id).join(),
+  async () => {
+    await nextTick()
+    observeStage()
+  },
+)
+
 onMounted(() => {
-  resize = new ResizeObserver(() => {
-    const figure = leftFigure.value
-    if (!figure) return
-    availableHeight.value = Math.max(80, figure.clientHeight - 8)
-    columnWidth.value = Math.max(48, figure.clientWidth)
-  })
-  if (root.value) resize.observe(root.value)
-  if (leftFigure.value) resize.observe(leftFigure.value)
+  observeStage()
 })
 
 onUnmounted(() => {
+  celebrateGen += 1
+  cancelSpeech()
+  numberblocksAssets.stopAllSounds()
   resize?.disconnect()
   clearTimers()
 })
 </script>
 
 <template>
-  <div ref="root" class="board" role="group" aria-label="Addition equation">
-    <div class="column">
-      <MathInput
-        :value="left"
-        :active="activeField === 'left'"
-        slot-label="First number"
-        @focus="emit('focus', 'left')"
-      />
-      <div ref="leftFigure" class="figure">
-        <NumberblockView :value="left" :px-per-unit="pxPerUnit" />
-      </div>
-    </div>
-
-    <span class="op" aria-hidden="true">{{ operation }}</span>
-
-    <div class="column">
-      <MathInput
-        :value="right"
-        :active="activeField === 'right'"
-        slot-label="Second number"
-        @focus="emit('focus', 'right')"
-      />
-      <div ref="rightFigure" class="figure">
-        <NumberblockView :value="right" :px-per-unit="pxPerUnit" />
-      </div>
-    </div>
-
-    <span class="op" aria-hidden="true">=</span>
-
-    <div class="column">
-      <MathInput
-        :value="answer"
-        :visible="showAnswer"
-        :active="activeField === 'answer'"
-        slot-label="Answer"
-        @focus="emit('focus', 'answer')"
-      />
-      <div
-        ref="answerFigure"
-        class="figure"
-        :class="{ waiting: !showAnswer }"
+  <div
+    ref="root"
+    class="board"
+    role="group"
+    aria-label="Equation"
+    :style="{ gridTemplateColumns }"
+  >
+    <template v-for="(column, index) in columns" :key="column.id">
+      <span
+        v-if="index > 0"
+        class="op"
+        :class="{ spoken: speakingOp === index }"
+        aria-hidden="true"
       >
-        <NumberblockView
-          :value="answer"
-          :px-per-unit="pxPerUnit"
-          :jumping="popping"
+        {{ symbolBefore(index) }}
+      </span>
+
+      <div class="column">
+        <MathInput
+          :value="column.value"
+          :visible="column.kind !== 'answer' || showAnswer"
+          :active="activeField === column.id"
+          :slot-label="slotLabel(column, index)"
+          @focus="emit('focus', column.id)"
         />
+        <div
+          :ref="(el) => setFigureRef(column.id, el)"
+          class="figure"
+          :class="{ waiting: column.kind === 'answer' && !showAnswer }"
+        >
+          <NumberblockView
+            :value="column.value"
+            :px-per-unit="pxPerUnit"
+            :jumping="column.kind === 'answer' && popping"
+            :speaking="column.kind === 'term' && speakingId === column.id"
+          />
+        </div>
       </div>
-    </div>
+    </template>
 
     <div v-if="clonesOn" class="merge-layer" aria-hidden="true">
       <div
+        v-for="(box, index) in cloneBoxes"
+        :key="index"
         class="clone"
         :class="{ flying }"
-        :style="cloneStyle(leftBox)"
+        :style="cloneStyle(box)"
       >
-        <NumberblockView :value="left" :px-per-unit="pxPerUnit" />
-      </div>
-      <div
-        class="clone"
-        :class="{ flying }"
-        :style="cloneStyle(rightBox)"
-      >
-        <NumberblockView :value="right" :px-per-unit="pxPerUnit" />
+        <NumberblockView :value="cloneValues[index]" :px-per-unit="pxPerUnit" />
       </div>
     </div>
   </div>
@@ -289,7 +379,6 @@ onUnmounted(() => {
   position: relative;
   flex: 1;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr);
   grid-template-rows: auto minmax(0, 1fr);
   align-items: stretch;
   gap: clamp(0.4rem, 1.6vw, 1.1rem);
@@ -351,6 +440,11 @@ onUnmounted(() => {
   line-height: 1;
   text-align: center;
   user-select: none;
+  transition: transform 0.2s ease;
+}
+
+.op.spoken {
+  transform: scale(1.18);
 }
 
 @media (prefers-reduced-motion: reduce) {

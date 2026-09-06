@@ -925,7 +925,9 @@ export class ScratchSb3Assets {
       source.addEventListener("ended", finish);
       this.playingSources.add(source);
       try {
-        source.start(0);
+        // start(0) is context time 0. After the clock has moved on, browsers
+        // skip into the buffer — you only hear the tail of the name.
+        source.start();
       } catch {
         finish();
       }
@@ -933,8 +935,19 @@ export class ScratchSb3Assets {
   }
 
   async playNumberName(value: number): Promise<void> {
-    if (!Number.isInteger(value) || value < 0) return;
+    if (!Number.isInteger(value) || value < 0 || value > 100) return;
     await this.playSound(`n${value}`);
+  }
+
+  stopAllSounds(): void {
+    for (const source of this.playingSources) {
+      try {
+        source.stop();
+      } catch {
+        // already stopped
+      }
+    }
+    this.playingSources.clear();
   }
 
   /** Call from a tap/key so AudioContext is already running when the merge plays. */

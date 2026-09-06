@@ -40,13 +40,14 @@ const glow = computed(() => glowFor(props.value))
   display: flex;
   align-items: center;
   justify-content: center;
-  justify-self: stretch;
+  justify-self: center;
   appearance: none;
   margin: 0;
   --min: 5.4rem;
   box-sizing: border-box;
   min-width: var(--min);
   width: 100%;
+  max-width: 12rem;
   min-height: 5.2rem;
   padding: 0.28em 0.5em;
   overflow: visible;

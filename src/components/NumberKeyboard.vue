@@ -1,14 +1,20 @@
 <script setup lang="ts">
+import type { Operation } from "../lib/math"
 import NumberblockView from "./NumberblockView.vue"
 
 const DIGITS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9] as const
 
 defineProps<{
   canUndo: boolean
+  canOperator: boolean
+  canEquals: boolean
+  pendingOperator: Operation | null
 }>()
 
 const emit = defineEmits<{
   digit: [value: number]
+  operator: [value: Operation]
+  equals: []
   undo: []
   clear: []
 }>()
@@ -74,6 +80,38 @@ const emit = defineEmits<{
       </button>
     </div>
 
+    <div class="ops" role="group" aria-label="Operations">
+      <button
+        type="button"
+        class="op-key plus"
+        :class="{ pending: pendingOperator === '+' }"
+        :disabled="!canOperator"
+        aria-label="Plus"
+        @click="emit('operator', '+')"
+      >
+        +
+      </button>
+      <button
+        type="button"
+        class="op-key minus"
+        :class="{ pending: pendingOperator === '-' }"
+        :disabled="!canOperator"
+        aria-label="Minus"
+        @click="emit('operator', '-')"
+      >
+        −
+      </button>
+      <button
+        type="button"
+        class="op-key equals"
+        :disabled="!canEquals"
+        aria-label="Equals"
+        @click="emit('equals')"
+      >
+        =
+      </button>
+    </div>
+
     <p class="hint">
       <svg viewBox="0 0 24 24" aria-hidden="true">
         <rect
@@ -94,7 +132,7 @@ const emit = defineEmits<{
           d="M7 15h10"
         />
       </svg>
-      Type or tap a number
+      Type a number, then + or −. The = key is +. Space for =
     </p>
   </div>
 </template>
@@ -211,6 +249,53 @@ const emit = defineEmits<{
   cursor: default;
 }
 
+.ops {
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  gap: 0.55rem;
+}
+
+.op-key {
+  flex: 0 1 7.5rem;
+  min-width: 4.8rem;
+  height: 3.6rem;
+  border: 0;
+  border-radius: 0.95rem;
+  background: #fff;
+  color: #1a1a1a;
+  font: inherit;
+  font-size: 2rem;
+  font-weight: 800;
+  line-height: 1;
+  box-shadow:
+    0 3px 0 #d9d4cc,
+    0 6px 12px rgba(70, 45, 15, 0.08);
+  cursor: pointer;
+}
+
+.op-key.plus.pending,
+.op-key.minus.pending {
+  outline: 3px solid rgba(90, 100, 120, 0.4);
+  outline-offset: 2px;
+}
+
+.op-key:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.op-key:active:not(:disabled) {
+  transform: translateY(1px);
+  box-shadow:
+    0 1px 0 #d9d4cc,
+    0 2px 6px rgba(70, 45, 15, 0.08);
+}
+
+.op-key:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 .hint {
   display: flex;
   align-items: center;
@@ -252,6 +337,13 @@ const emit = defineEmits<{
 
   .digit {
     font-size: 0.8rem;
+  }
+
+  .op-key {
+    flex: 1 1 0;
+    max-width: 7rem;
+    height: 3.2rem;
+    font-size: 1.7rem;
   }
 }
 </style>

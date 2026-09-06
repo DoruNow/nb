@@ -11,6 +11,7 @@ const props = defineProps<{
   value: number | null
   alt?: string
   jumping?: boolean
+  speaking?: boolean
   keepNumeral?: boolean
   pxPerUnit?: number
 }>()
@@ -68,7 +69,14 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="nb" :class="{ jump: jumping && value !== null, sized }">
+  <div
+    class="nb"
+    :class="{
+      jump: jumping && value !== null,
+      speak: speaking && value !== null,
+      sized,
+    }"
+  >
     <img
       v-for="(asset, index) in assets"
       :key="`${addends[index]}-${index}`"
@@ -120,6 +128,10 @@ onUnmounted(() => {
   animation: hop 0.42s ease-in-out 2;
 }
 
+.speak {
+  animation: wave 0.7s ease-in-out 1;
+}
+
 @keyframes hop {
   0%,
   100% {
@@ -130,8 +142,25 @@ onUnmounted(() => {
   }
 }
 
+@keyframes wave {
+  0%,
+  100% {
+    transform: translateY(0) rotate(0deg);
+  }
+  22% {
+    transform: translateY(-8px) rotate(-7deg);
+  }
+  48% {
+    transform: translateY(-3px) rotate(6deg);
+  }
+  74% {
+    transform: translateY(-7px) rotate(-5deg);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .jump {
+  .jump,
+  .speak {
     animation: none;
   }
 }

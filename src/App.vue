@@ -3,26 +3,46 @@ import { onMounted, onUnmounted } from "vue"
 import MathEquation from "./components/MathEquation.vue"
 import NumberKeyboard from "./components/NumberKeyboard.vue"
 import { numberblocksAssets } from "./lib/numberblocksSb3"
+import { unlockSpeech } from "./lib/speak"
 import { useEquation } from "./model/equation"
+import type { Operation } from "./lib/math"
 
 const {
-  left,
-  right,
-  answer,
-  operation,
+  columns,
+  operators,
   activeField,
   correct,
   canUndo,
+  canOperator,
+  canEquals,
+  pendingOperator,
   applyDigit,
+  applyOperator,
+  applyEquals,
   focus,
   advance,
   undo,
   clear,
 } = useEquation()
 
-function onDigit(digit: number) {
+function unlock() {
   void numberblocksAssets.unlockAudio()
+  unlockSpeech()
+}
+
+function onDigit(digit: number) {
+  unlock()
   applyDigit(digit)
+}
+
+function onOperator(operation: Operation) {
+  unlock()
+  applyOperator(operation)
+}
+
+function onEquals() {
+  unlock()
+  applyEquals()
 }
 
 function onKeydown(event: KeyboardEvent) {
@@ -31,6 +51,17 @@ function onKeydown(event: KeyboardEvent) {
   if (event.key >= "0" && event.key <= "9") {
     event.preventDefault()
     onDigit(Number(event.key))
+  } else if (
+    event.key === "+" ||
+    event.key === "=" ||
+    event.key === "-" ||
+    event.key === "−"
+  ) {
+    event.preventDefault()
+    onOperator(event.key === "-" || event.key === "−" ? "-" : "+")
+  } else if (event.key === " " || event.code === "Space") {
+    event.preventDefault()
+    onEquals()
   } else if (event.key === "Tab") {
     event.preventDefault()
     advance()
@@ -50,10 +81,8 @@ onUnmounted(() => {
   <div class="room">
     <div class="playfield">
       <MathEquation
-        :left="left"
-        :right="right"
-        :answer="answer"
-        :operation="operation"
+        :columns="columns"
+        :operators="operators"
         :active-field="activeField"
         :correct="correct"
         @focus="focus"
@@ -63,7 +92,12 @@ onUnmounted(() => {
     <footer class="band bottom">
       <NumberKeyboard
         :can-undo="canUndo"
+        :can-operator="canOperator"
+        :can-equals="canEquals"
+        :pending-operator="pendingOperator"
         @digit="onDigit"
+        @operator="onOperator"
+        @equals="onEquals"
         @undo="undo"
         @clear="clear"
       />
@@ -114,10 +148,11 @@ onUnmounted(() => {
 .playfield {
   flex: 1 1 auto;
   display: flex;
-  width: min(1100px, calc(100% - 1.6rem));
-  margin: 0 auto;
+  width: 100%;
+  margin: 0;
+  min-width: 0;
   min-height: 0;
-  padding: 1.4rem 0.4rem 0.2rem;
+  padding: 1.4rem 1rem 0.2rem;
 }
 
 .bottom {

@@ -1,14 +1,21 @@
-export type Operation = "+"
+export type Operation = "+" | "-"
 
-export function evaluate(
+export function applyOp(
   left: number,
   right: number,
   operation: Operation,
 ): number {
-  switch (operation) {
-    case "+":
-      return left + right
+  return operation === "+" ? left + right : left - right
+}
+
+/** Left-to-right, no precedence — the expression a child just built. */
+export function evaluate(terms: number[], operations: Operation[]): number {
+  if (terms.length === 0) return 0
+  let result = terms[0]
+  for (let i = 0; i < operations.length; i++) {
+    result = applyOp(result, terms[i + 1] ?? 0, operations[i])
   }
+  return result
 }
 
 /**
@@ -16,11 +23,12 @@ export function evaluate(
  * `0` is a real value, so only `null` fields count as empty.
  */
 export function isCorrect(
-  left: number | null,
-  right: number | null,
+  terms: (number | null)[],
+  operations: Operation[],
   answer: number | null,
-  operation: Operation,
 ): boolean | null {
-  if (left === null || right === null || answer === null) return null
-  return evaluate(left, right, operation) === answer
+  if (answer === null || terms.length < 2) return null
+  if (terms.some((term) => term === null)) return null
+  if (operations.length !== terms.length - 1) return null
+  return evaluate(terms as number[], operations) === answer
 }
