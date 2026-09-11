@@ -10,6 +10,7 @@ import MathInput from "./MathInput.vue"
 import NumberblockView from "./NumberblockView.vue"
 
 const FIVE_CUBES = [1, 2, 3, 4, 5] as const
+const BETWEEN_NUMBERS_MS = 1000
 
 const props = defineProps<{
   columns: CountColumn[]
@@ -89,23 +90,35 @@ function observeStage() {
   measureStage()
 }
 
+async function speakColumn(index: number) {
+  hoppingIndex.value = index
+  const value = props.columns[index]?.value
+  if (value !== null && canSpeakNumber(value)) {
+    await numberblocksAssets.playNumberName(value)
+  } else {
+    await sleep(220)
+  }
+}
+
 async function celebrateLock(index: number) {
+  const gen = ++celebrateGen
+  hoppingAll.value = false
+  hoppingIndex.value = index
+
+  await speakColumn(index)
+  if (!stillCelebrating(gen)) return
+
   if (props.complete) {
-    void celebrateFinish()
+    await sleep(BETWEEN_NUMBERS_MS)
+    if (!stillCelebrating(gen)) return
+    await celebrateFinish()
     return
   }
 
-  const gen = ++celebrateGen
-  hoppingIndex.value = index
   if (hopTimer) clearTimeout(hopTimer)
   hopTimer = setTimeout(() => {
     if (stillCelebrating(gen)) hoppingIndex.value = null
   }, 840)
-
-  const value = props.columns[index]?.value
-  if (value !== null && canSpeakNumber(value)) {
-    await numberblocksAssets.playNumberName(value)
-  }
 }
 
 async function celebrateFinish() {
@@ -119,13 +132,9 @@ async function celebrateFinish() {
 
   for (let i = 0; i < props.columns.length; i++) {
     if (!stillCelebrating(gen)) return
-    hoppingIndex.value = i
-    const value = props.columns[i]?.value
-    if (value !== null && canSpeakNumber(value)) {
-      await numberblocksAssets.playNumberName(value)
-    } else {
-      await sleep(220)
-    }
+    await speakColumn(i)
+    if (!stillCelebrating(gen)) return
+    await sleep(BETWEEN_NUMBERS_MS)
   }
 
   if (!stillCelebrating(gen)) return
@@ -198,6 +207,7 @@ watch(
       :style="{
         gridColumn: (index % 5) + 1,
         gridRow: index < 5 ? 1 : 3,
+        '--read-glow': glowFor(column.value) ?? '#f2c01e',
       }"
     >
       <p
@@ -312,6 +322,7 @@ watch(
 }
 
 .cell {
+  position: relative;
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr);
   justify-items: center;
@@ -324,6 +335,7 @@ watch(
     0 0 0 1px rgba(40, 20, 0, 0.07),
     0 8px 18px rgba(80, 50, 20, 0.07);
   transition:
+    background 0.2s ease,
     box-shadow 0.2s ease,
     transform 0.15s ease;
 }
@@ -335,9 +347,20 @@ watch(
 }
 
 .cell.reading {
+  z-index: 2;
+  background: color-mix(in srgb, var(--read-glow) 32%, #ffe566);
   box-shadow:
-    0 0 0 3px color-mix(in srgb, #6d7788 40%, transparent),
-    0 10px 22px rgba(80, 50, 20, 0.1);
+    0 0 0 5px color-mix(in srgb, var(--read-glow) 70%, #f0b429),
+    0 14px 32px color-mix(in srgb, var(--read-glow) 40%, rgba(200, 140, 20, 0.35));
+  animation: reading-pulse 0.9s ease-in-out infinite;
+}
+
+.cell.reading :deep(.slot.filled) {
+  border-color: color-mix(in srgb, var(--read-glow) 75%, #3b3b3b);
+  box-shadow:
+    0 8px 18px rgba(80, 50, 20, 0.08),
+    0 0 0 1px rgba(40, 20, 0, 0.06),
+    0 0 26px color-mix(in srgb, var(--read-glow) 80%, transparent);
 }
 
 .cell :deep(.slot) {
@@ -413,5 +436,22 @@ watch(
     0 8px 18px rgba(80, 50, 20, 0.08),
     0 0 0 1px rgba(40, 20, 0, 0.06),
     0 0 22px color-mix(in srgb, var(--glow) 70%, transparent);
+}
+
+@keyframes reading-pulse {
+  0%,
+  100% {
+    transform: scale(1.04);
+  }
+  50% {
+    transform: scale(1.08);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cell.reading {
+    animation: none;
+    transform: none;
+  }
 }
 </style>

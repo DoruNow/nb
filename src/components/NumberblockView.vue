@@ -129,7 +129,7 @@ onUnmounted(() => {
 }
 
 .speak {
-  animation: wave 0.7s ease-in-out 1;
+  animation: wave 0.7s ease-in-out infinite;
 }
 
 @keyframes hop {
