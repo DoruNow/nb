@@ -92,3 +92,36 @@ export function displaySize(
   const { wide, tall } = blockUnits(value)
   return { width: wide * pxPerUnit, height: tall * pxPerUnit }
 }
+
+const ROW_GAP = 0.4
+
+/** Scale several figures standing in a row so they fit a stage. */
+export function rowScale(options: {
+  figures: number[][]
+  availableWidth: number
+  availableHeight: number
+  gapUnits?: number
+}): number {
+  const gapUnits = options.gapUnits ?? ROW_GAP
+  const visible = options.figures.filter((parts) => parts.length > 0)
+  if (visible.length === 0 || options.availableHeight <= 0) return 1
+
+  const units = visible.map(figureUnits)
+  const maxTall = Math.max(...units.map((unit) => unit.tall), 1)
+  const totalWide =
+    units.reduce((sum, unit) => sum + unit.wide, 0) +
+    gapUnits * Math.max(0, units.length - 1)
+  let pxPerUnit = options.availableHeight / maxTall
+  if (options.availableWidth > 0 && totalWide > 0) {
+    pxPerUnit = Math.min(pxPerUnit, options.availableWidth / totalWide)
+  }
+  return pxPerUnit
+}
+
+export function displaySizeForParts(
+  parts: number[],
+  pxPerUnit: number,
+): { width: number; height: number } {
+  const { wide, tall } = figureUnits(parts)
+  return { width: wide * pxPerUnit, height: tall * pxPerUnit }
+}

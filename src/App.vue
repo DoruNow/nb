@@ -3,13 +3,15 @@ import { computed, onMounted, onUnmounted, ref } from "vue"
 import CountSequence from "./components/CountSequence.vue"
 import MathEquation from "./components/MathEquation.vue"
 import NumberKeyboard from "./components/NumberKeyboard.vue"
+import TimesCount from "./components/TimesCount.vue"
 import { numberblocksAssets } from "./lib/numberblocksSb3"
 import { unlockSpeech } from "./lib/speak"
 import { useEquation } from "./model/equation"
 import { useCount } from "./model/count"
+import { useTimesCount } from "./model/times"
 import type { Operation } from "./lib/math"
 
-type Mode = "add" | "count"
+type Mode = "add" | "count" | "times"
 
 const mode = ref<Mode>("add")
 
@@ -43,9 +45,30 @@ const {
   clear: countClear,
 } = useCount()
 
-const canUndo = computed(() =>
-  mode.value === "add" ? addCanUndo.value : countCanUndo.value,
-)
+const {
+  step: timesStep,
+  stepDraft: timesStepDraft,
+  figured: timesFigured,
+  draft: timesDraft,
+  complete: timesComplete,
+  canUndo: timesCanUndo,
+  justLockedIndex: timesJustLockedIndex,
+  activeField: timesActiveField,
+  applyDigit: timesDigit,
+  focusStep: timesFocusStep,
+  focusProduct: timesFocusProduct,
+  commitStep: timesCommitStep,
+  clearDraft: timesClearDraft,
+  debugState: timesDebugState,
+  undo: timesUndo,
+  clear: timesClear,
+} = useTimesCount()
+
+const canUndo = computed(() => {
+  if (mode.value === "add") return addCanUndo.value
+  if (mode.value === "count") return countCanUndo.value
+  return timesCanUndo.value
+})
 
 function unlock() {
   void numberblocksAssets.unlockAudio()
@@ -56,12 +79,17 @@ function setMode(next: Mode) {
   if (next === mode.value) return
   mode.value = next
   if (next === "add") addClear()
-  else countClear()
+  else if (next === "count") countClear()
+  else timesClear()
 }
 
 function onDigit(digit: number) {
   unlock()
+  if (mode.value === "times") {
+    console.log("[times] pad", digit, timesDebugState({ via: "pad" }))
+  }
   if (mode.value === "count") countDigit(digit)
+  else if (mode.value === "times") timesDigit(digit)
   else addDigit(digit)
 }
 
@@ -79,16 +107,22 @@ function onEquals() {
 
 function onUndo() {
   if (mode.value === "count") countUndo()
+  else if (mode.value === "times") timesUndo()
   else addUndo()
 }
 
 function onClear() {
   if (mode.value === "count") countClear()
+  else if (mode.value === "times") timesClear()
   else addClear()
 }
 
 function onKeydown(event: KeyboardEvent) {
   if (event.metaKey || event.ctrlKey || event.altKey) return
+
+  if (mode.value === "times") {
+    console.log("[times] keydown", event.key, timesDebugState({ mode: mode.value }))
+  }
 
   if (event.key >= "0" && event.key <= "9") {
     event.preventDefault()
@@ -99,6 +133,21 @@ function onKeydown(event: KeyboardEvent) {
   if (event.key === "Backspace") {
     event.preventDefault()
     onUndo()
+    return
+  }
+
+  if (event.key === "Escape") {
+    event.preventDefault()
+    onClear()
+    return
+  }
+
+  if (mode.value === "times") {
+    if (event.key === "Tab" || event.key === "Enter") {
+      event.preventDefault()
+      if (timesActiveField.value === "step") timesCommitStep()
+      else if (event.key === "Tab") timesFocusStep()
+    }
     return
   }
 
@@ -151,6 +200,15 @@ onUnmounted(() => {
       >
         Count
       </button>
+      <button
+        type="button"
+        role="tab"
+        :aria-selected="mode === 'times'"
+        :class="{ on: mode === 'times' }"
+        @click="setMode('times')"
+      >
+        Times
+      </button>
     </header>
 
     <div class="playfield">
@@ -163,12 +221,27 @@ onUnmounted(() => {
         @focus="addFocus"
       />
       <CountSequence
-        v-else
+        v-else-if="mode === 'count'"
         :columns="countColumns"
         :step="countStep"
         :active-index="countActiveIndex"
         :complete="countComplete"
         :just-locked-index="justLockedIndex"
+      />
+      <TimesCount
+        v-else
+        :step="timesStep"
+        :step-draft="timesStepDraft"
+        :figured="timesFigured"
+        :draft="timesDraft"
+        :complete="timesComplete"
+        :just-locked-index="timesJustLockedIndex"
+        :active-field="timesActiveField"
+        :release-answer="timesClearDraft"
+        @focus-step="timesFocusStep"
+        @focus-product="timesFocusProduct"
+        @commit-step="timesCommitStep"
+        @clear-draft="timesClearDraft"
       />
     </div>
 
@@ -179,6 +252,7 @@ onUnmounted(() => {
         :can-equals="canEquals"
         :pending-operator="pendingOperator"
         :show-operators="mode === 'add'"
+        :mode="mode"
         @digit="onDigit"
         @operator="onOperator"
         @equals="onEquals"

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from "vue"
+import { computed, ref } from "vue"
 import { glowFor } from "../lib/numberblockColors"
 
 const props = withDefaults(
@@ -8,28 +8,47 @@ const props = withDefaults(
     active: boolean
     slotLabel: string
     visible?: boolean
+    readonly?: boolean
+    shake?: boolean
   }>(),
-  { visible: true },
+  { visible: true, readonly: false, shake: false },
 )
 
 const emit = defineEmits<{
   focus: []
+  blur: []
 }>()
 
+const button = ref<HTMLButtonElement | null>(null)
 const glow = computed(() => glowFor(props.value))
+
+defineExpose({
+  focus() {
+    button.value?.focus()
+  },
+})
 </script>
 
 <template>
   <button
+    ref="button"
     type="button"
     class="slot"
-    :class="{ active, filled: value !== null && visible }"
+    :class="{
+      active: active && !readonly,
+      filled: value !== null && visible,
+      readonly,
+      shake,
+    }"
     :style="{
       '--glow': glow ?? 'transparent',
     }"
     :aria-label="slotLabel"
-    :aria-pressed="active"
+    :aria-pressed="active && !readonly"
+    :aria-readonly="readonly"
     @click="emit('focus')"
+    @focus="emit('focus')"
+    @blur="emit('blur')"
   >
     <span v-if="value !== null && visible" class="numeral">{{ value }}</span>
   </button>
@@ -99,9 +118,46 @@ const glow = computed(() => glowFor(props.value))
   outline-offset: 4px;
 }
 
+.slot.readonly {
+  cursor: default;
+  border-color: color-mix(in srgb, var(--glow) 55%, #c4a57a);
+}
+
+.slot.shake {
+  animation: shake 0.58s ease-in-out;
+}
+
 .numeral {
   display: block;
   width: 100%;
   text-align: center;
+}
+
+@keyframes shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  18% {
+    transform: translateX(-9px);
+  }
+  36% {
+    transform: translateX(8px);
+  }
+  54% {
+    transform: translateX(-6px);
+  }
+  72% {
+    transform: translateX(5px);
+  }
+  86% {
+    transform: translateX(-3px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .slot.shake {
+    animation: none;
+  }
 }
 </style>
