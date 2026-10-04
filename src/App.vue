@@ -29,9 +29,6 @@ const {
   activeField: addActiveField,
   correct: addCorrect,
   canUndo: addCanUndo,
-  canOperator,
-  canEquals,
-  pendingOperator,
   applyDigit: addDigit,
   applyOperator,
   applyEquals,
@@ -322,14 +319,7 @@ onUnmounted(() => {
     <footer class="band bottom">
       <NumberKeyboard
         :can-undo="canUndo"
-        :can-operator="canOperator"
-        :can-equals="canEquals"
-        :pending-operator="pendingOperator"
-        :show-operators="mode === 'add'"
         :mode="mode"
-        @digit="onDigit"
-        @operator="onOperator"
-        @equals="onEquals"
         @undo="onUndo"
         @clear="onClear"
       />
