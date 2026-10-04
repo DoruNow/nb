@@ -1,19 +1,48 @@
-export type Operation = "+" | "-"
+export type Operation = "+" | "-" | "×" | "÷"
 
 export function applyOp(
   left: number,
   right: number,
   operation: Operation,
 ): number {
-  return operation === "+" ? left + right : left - right
+  if (operation === "+") return left + right
+  if (operation === "-") return left - right
+  if (operation === "×") return left * right
+  return left / right
 }
 
-/** Left-to-right, no precedence — the expression a child just built. */
+function isMulDiv(operation: Operation): boolean {
+  return operation === "×" || operation === "÷"
+}
+
+/**
+ * Standard order of operations: × and ÷ before + and −,
+ * left-to-right within the same precedence.
+ */
 export function evaluate(terms: number[], operations: Operation[]): number {
   if (terms.length === 0) return 0
-  let result = terms[0]
-  for (let i = 0; i < operations.length; i++) {
-    result = applyOp(result, terms[i + 1] ?? 0, operations[i])
+
+  const values = [...terms]
+  const ops = [...operations]
+
+  let i = 0
+  while (i < ops.length) {
+    const op = ops[i]
+    if (op && isMulDiv(op)) {
+      const left = values[i] ?? 0
+      const right = values[i + 1] ?? 0
+      values.splice(i, 2, applyOp(left, right, op))
+      ops.splice(i, 1)
+    } else {
+      i++
+    }
+  }
+
+  let result = values[0] ?? 0
+  for (let j = 0; j < ops.length; j++) {
+    const op = ops[j]
+    if (!op) continue
+    result = applyOp(result, values[j + 1] ?? 0, op)
   }
   return result
 }

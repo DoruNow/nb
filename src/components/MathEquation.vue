@@ -93,7 +93,17 @@ function symbolBefore(index: number): string {
   const column = props.columns[index]
   if (!column || column.kind === "answer") return "="
   const operation = props.operators[index - 1]
-  return operation === "-" ? "−" : (operation ?? "+")
+  if (operation === "-") return "−"
+  if (operation === "×") return "×"
+  if (operation === "÷") return "÷"
+  return operation ?? "+"
+}
+
+function spokenOp(operation: Operation): "plus" | "minus" | "times" | "divided by" {
+  if (operation === "-") return "minus"
+  if (operation === "×") return "times"
+  if (operation === "÷") return "divided by"
+  return "plus"
 }
 
 function slotLabel(column: Column, index: number): string {
@@ -201,7 +211,7 @@ async function celebrate() {
     if (!stillCelebrating(gen)) return
     if (i > 0) {
       speakingOp.value = i
-      await speakOperator(ops[i - 1] === "-" ? "minus" : "plus")
+      await speakOperator(spokenOp(ops[i - 1]))
       if (!stillCelebrating(gen)) return
       speakingOp.value = null
     }

@@ -16,17 +16,19 @@ import JSZip, { type JSZipObject } from "jszip";
  *   // Direct Numberblock, 0–99:
  *   const sevenUrl = await assets.getNumberSvgUrl(7);
  *
- *   // Any costume in the Scratch project:
- *   const url = await assets.getSvgUrl("NBs//Ten + One", "n37");
+ *   // Character-aware figure (official + FOF + named larges):
+ *   //   144 -> One Hundred + Forty-Four
+ *   const figure = await assets.getNumberblockFigure(144);
  *
- *   // Decompose any supported large number into the Scratch sprites
- *   // that represent its decimal-place chunks:
+ *   // Place-value chunks (Scratch generator style):
  *   const parts = await assets.getNumberParts(1234);
  *   // [
  *   //   { target: "NBs//Ten T + Thousands", costume: "n1", ... },
  *   //   { target: "NBs//Hundreds",          costume: "n2", ... },
  *   //   { target: "NBs//Ten + One",         costume: "n34", ... }
  *   // ]
+ *
+ * See docs/numberblocks-sb3-structure.md for the full target/costume tree.
  */
 
 export type ScratchCostume = {
@@ -198,6 +200,303 @@ export const MAX_NUMBERBLOCK_VALUE = 99_999_999_999_999n;
 
 /** Official character costumes (faces, hair, limbs). */
 const OFFICIAL_TARGET = "assets//Official Numberblocks 0-100";
+
+/** Extra named faces not present in the official 0–100 pack. */
+const FOF_TARGET = "assets//Figured-Out Frenzy";
+
+/**
+ * Stage list `figured-out frenzy guys` from the Scratch project.
+ * These integers are first-class characters (named face and/or `nN-fof`).
+ */
+export const FOF_NUMBERBLOCK_VALUES = [
+  99, 98, 97, 96, 95, 94, 93, 92, 91, 89, 88, 87, 86, 85, 84, 83, 82, 79, 78,
+  77, 76, 75, 74, 73, 71, 69, 68, 67, 66, 65, 62, 61, 59, 58, 57, 53, 52, 51,
+  47, 46, 44, 43, 41,
+] as const;
+
+/** FOF values that have a dedicated named SVG in `assets//Figured-Out Frenzy`. */
+export const FOF_NAMED_NUMBERBLOCK_VALUES = [
+  99, 96, 91, 88, 84, 77, 75, 68, 66, 65, 44,
+] as const;
+
+type NamedLargeCostume = {
+  value: number;
+  target: string;
+  costume: string;
+  /** When true, only used for an exact match — never as a greedy split piece. */
+  exactOnly?: boolean;
+};
+
+/**
+ * Named large-number costumes from the Scratch asset packs.
+ * Round values participate in greedy splitting; odd specials are exact-only.
+ */
+const NAMED_LARGE_COSTUMES: readonly NamedLargeCostume[] = [
+  // Hundreds / round powers — assets//Large Numbers
+  { value: 200, target: "assets//Large Numbers", costume: "Two Hundred" },
+  { value: 300, target: "assets//Large Numbers", costume: "Three Hundred" },
+  { value: 400, target: "assets//Large Numbers", costume: "Four Hundred" },
+  { value: 500, target: "assets//Large Numbers", costume: "Five Hundred" },
+  { value: 600, target: "assets//Large Numbers", costume: "Six Hundred" },
+  { value: 700, target: "assets//Large Numbers", costume: "Seven Hundred" },
+  { value: 800, target: "assets//Large Numbers", costume: "Eight Hundred" },
+  { value: 900, target: "assets//Large Numbers", costume: "Nine Hundred" },
+  {
+    value: 1_000,
+    target: "assets//Thousands (Small)",
+    costume: "One Thousand",
+  },
+  {
+    value: 2_000,
+    target: "assets//Thousands (Small)",
+    costume: "Two Thousand",
+  },
+  {
+    value: 3_000,
+    target: "assets//Thousands (Small)",
+    costume: "Three Thousand",
+  },
+  {
+    value: 4_000,
+    target: "assets//Thousands (Small)",
+    costume: "Four Thousand",
+  },
+  {
+    value: 5_000,
+    target: "assets//Thousands (Small)",
+    costume: "Five Thousand",
+  },
+  {
+    value: 6_000,
+    target: "assets//Thousands (Small)",
+    costume: "Six Thousand",
+  },
+  {
+    value: 7_000,
+    target: "assets//Thousands (Small)",
+    costume: "Seven Thousand",
+  },
+  {
+    value: 8_000,
+    target: "assets//Thousands (Small)",
+    costume: "Eight Thousand",
+  },
+  {
+    value: 9_000,
+    target: "assets//Thousands (Small)",
+    costume: "Nine Thousand",
+  },
+  {
+    value: 10_000,
+    target: "assets//Ten Thousands",
+    costume: "Ten Thousand",
+  },
+  {
+    value: 11_000,
+    target: "assets//Ten Thousands",
+    costume: "Eleven Thousand",
+  },
+  {
+    value: 12_000,
+    target: "assets//Ten Thousands",
+    costume: "Twelve Thousand",
+  },
+  {
+    value: 13_000,
+    target: "assets//Ten Thousands",
+    costume: "Thirteen Thousand",
+  },
+  {
+    value: 14_000,
+    target: "assets//Ten Thousands",
+    costume: "Fourteen Thousand",
+  },
+  {
+    value: 15_000,
+    target: "assets//Ten Thousands",
+    costume: "Fifteen Thousand",
+  },
+  {
+    value: 16_000,
+    target: "assets//Ten Thousands",
+    costume: "Sixteen Thousand",
+  },
+  {
+    value: 17_000,
+    target: "assets//Ten Thousands",
+    costume: "Seventeen Thousand",
+  },
+  {
+    value: 18_000,
+    target: "assets//Ten Thousands",
+    costume: "Eighteen Thousand",
+  },
+  {
+    value: 19_000,
+    target: "assets//Ten Thousands",
+    costume: "Nineteen Thousand3",
+  },
+  {
+    value: 20_000,
+    target: "assets//Ten Thousands",
+    costume: "Twenty Thousand",
+  },
+  {
+    value: 30_000,
+    target: "assets//Ten Thousands",
+    costume: "Thirty Thousand",
+  },
+  {
+    value: 40_000,
+    target: "assets//Ten Thousands",
+    costume: "Forty Thousand",
+  },
+  {
+    value: 50_000,
+    target: "assets//Ten Thousands",
+    costume: "Fifty Thousand",
+  },
+  {
+    value: 60_000,
+    target: "assets//Ten Thousands",
+    costume: "Sixty Thousand",
+  },
+  {
+    value: 70_000,
+    target: "assets//Ten Thousands",
+    costume: "Seventy Thousand",
+  },
+  {
+    value: 80_000,
+    target: "assets//Ten Thousands",
+    costume: "Eighty Thousand",
+  },
+  {
+    value: 90_000,
+    target: "assets//Ten Thousands",
+    costume: "Ninety Thousand",
+  },
+  {
+    value: 100_000,
+    target: "assets//Hundred Thousands",
+    costume: "One Hundred Thousand",
+  },
+  {
+    value: 1_000_000,
+    target: "assets//Millions and more",
+    costume: "One Million",
+  },
+  {
+    value: 2_000_000,
+    target: "assets//Millions and more",
+    costume: "Two Million",
+  },
+  {
+    value: 3_000_000,
+    target: "assets//Millions and more",
+    costume: "Three Million",
+  },
+  {
+    value: 4_000_000,
+    target: "assets//Millions and more",
+    costume: "Four Million",
+  },
+  {
+    value: 5_000_000,
+    target: "assets//Millions and more",
+    costume: "Five Million",
+  },
+  {
+    value: 6_000_000,
+    target: "assets//Millions and more",
+    costume: "Six Million",
+  },
+  {
+    value: 7_000_000,
+    target: "assets//Millions and more",
+    costume: "Seven Million",
+  },
+  {
+    value: 8_000_000,
+    target: "assets//Millions and more",
+    costume: "Eight Million",
+  },
+  {
+    value: 9_000_000,
+    target: "assets//Millions and more",
+    costume: "Nine Million",
+  },
+  {
+    value: 10_000_000,
+    target: "assets//Millions and more",
+    costume: "Ten Million",
+  },
+  {
+    value: 100_000_000,
+    target: "assets//Millions and more",
+    costume: "One Hundred Million",
+  },
+  {
+    value: 1_000_000_000,
+    target: "assets//Millions and more",
+    costume: "One Billion",
+  },
+  {
+    value: 1_000_000_000_000,
+    target: "assets//Millions and more",
+    costume: "One Trillion",
+  },
+
+  // Exact-only specials (do not use as greedy addends)
+  {
+    value: 2_024,
+    target: "assets//Thousands (Small)",
+    costume: "Two Thousand and Twenty-Four",
+    exactOnly: true,
+  },
+  {
+    value: 2_025,
+    target: "assets//Thousands (Small)",
+    costume: "Two Thousand and Twenty-Five",
+    exactOnly: true,
+  },
+  {
+    value: 2_048,
+    target: "assets//Thousands (Small)",
+    costume: "Two Thousand and Forty-Eight",
+    exactOnly: true,
+  },
+  {
+    value: 7_500,
+    target: "assets//Thousands (Small)",
+    costume: "Seven Thousand Five Hundred",
+    exactOnly: true,
+  },
+  {
+    value: 32_767,
+    target: "assets//Ten Thousands",
+    costume: "Thirty-Two Thousand Seven Hundred and Sixty-Seven",
+    exactOnly: true,
+  },
+  {
+    value: 65_536,
+    target: "assets//Ten Thousands",
+    costume: "Sixty-Five Thousand Five Hundred and Thirty-Six",
+    exactOnly: true,
+  },
+  {
+    value: 97_104,
+    target: "assets//Large Numbers",
+    costume: "Ninety-Seven Thousand One Hundred and Four",
+    exactOnly: true,
+  },
+  {
+    value: 314_159,
+    target: "assets//Hundred Thousands",
+    costume: "Three Hundred and Fourteen Thousand One Hundred and Fifty-Nine",
+    exactOnly: true,
+  },
+] as const;
 
 const TRANSLATE_RE =
   /transform="translate\(\s*([^,\s)]+)\s*,\s*([^,\s)]+)\s*\)"/;
@@ -660,20 +959,52 @@ export const OFFICIAL_NUMBERBLOCK_VALUES = [
   19, 18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0,
 ] as const;
 
-const OFFICIAL_VALUE_SET = new Set<number>(OFFICIAL_NUMBERBLOCK_VALUES);
+const FOF_VALUE_SET = new Set<number>(FOF_NUMBERBLOCK_VALUES);
+const FOF_NAMED_VALUE_SET = new Set<number>(FOF_NAMED_NUMBERBLOCK_VALUES);
+
+const LARGE_BY_VALUE = new Map<number, NamedLargeCostume>(
+  NAMED_LARGE_COSTUMES.map((entry) => [entry.value, entry]),
+);
+
+const EXACT_ONLY_LARGE = new Set<number>(
+  NAMED_LARGE_COSTUMES.filter((entry) => entry.exactOnly).map(
+    (entry) => entry.value,
+  ),
+);
 
 /**
- * Split a number into official Numberblock characters.
- * 101 → One Hundred + One, not the generated 1-cube.
+ * Atomic character values used when splitting a composite number.
+ * Official ∪ FOF covers every integer 0–100; round large costumes are
+ * included so 200 stays “Two Hundred” instead of 100+100.
+ */
+export const CHARACTER_NUMBERBLOCK_VALUES: readonly number[] = [
+  ...NAMED_LARGE_COSTUMES.filter((entry) => !entry.exactOnly).map(
+    (entry) => entry.value,
+  ),
+  ...OFFICIAL_NUMBERBLOCK_VALUES,
+  ...FOF_NUMBERBLOCK_VALUES,
+]
+  .filter((value, index, all) => all.indexOf(value) === index)
+  .sort((a, b) => b - a);
+
+const CHARACTER_VALUE_SET = new Set<number>(CHARACTER_NUMBERBLOCK_VALUES);
+
+/**
+ * Split a number into Numberblock character addends.
+ *
+ * Prefers official faces, Figured-Out Frenzy characters, and named large
+ * costumes as atoms — so 144 → 100+44 (not 100+42+2) and 77 → 77.
  */
 export function splitOfficialAddends(value: number): number[] {
   if (!Number.isInteger(value) || value < 0) return [];
   if (value === 0) return [0];
-  if (OFFICIAL_VALUE_SET.has(value)) return [value];
+  if (EXACT_ONLY_LARGE.has(value) || CHARACTER_VALUE_SET.has(value)) {
+    return [value];
+  }
 
   const parts: number[] = [];
   let rest = value;
-  for (const piece of OFFICIAL_NUMBERBLOCK_VALUES) {
+  for (const piece of CHARACTER_NUMBERBLOCK_VALUES) {
     if (piece === 0) continue;
     while (rest >= piece) {
       parts.push(piece);
@@ -1098,13 +1429,9 @@ export class ScratchSb3Assets {
       throw new Error(`Expected a non-negative integer, got ${number}.`);
     }
 
-    const official = await this.resolveOfficialCostume(number);
-    if (official) {
-      return this.loadAsset(OFFICIAL_TARGET, official, options);
-    }
-
-    if (number <= 99) {
-      return this.loadAsset("NBs//Ten + One", `n${number}`, options);
+    const resolved = await this.resolveNumberblockCostume(number);
+    if (resolved) {
+      return this.loadAsset(resolved.target, resolved.costume, options);
     }
 
     throw new Error(
@@ -1144,12 +1471,55 @@ export class ScratchSb3Assets {
     return { url, ...size };
   }
 
-  private async resolveOfficialCostume(number: number): Promise<string | null> {
+  /**
+   * Resolve a single integer to the best Scratch target/costume.
+   *
+   * Order: official named face → FOF named face → large named costume →
+   * generated `nN-fof` / `nN` for 0–99.
+   */
+  private async resolveNumberblockCostume(
+    number: number,
+  ): Promise<{ target: string; costume: string } | null> {
+    const official = await this.resolveNamedCostume(OFFICIAL_TARGET, number);
+    if (official) return { target: OFFICIAL_TARGET, costume: official };
+
+    if (FOF_NAMED_VALUE_SET.has(number)) {
+      const fof = await this.resolveNamedCostume(FOF_TARGET, number);
+      if (fof) return { target: FOF_TARGET, costume: fof };
+    }
+
+    const large = LARGE_BY_VALUE.get(number);
+    if (large && (await this.hasCostume(large.target, large.costume))) {
+      return { target: large.target, costume: large.costume };
+    }
+
+    if (number <= 99) {
+      const fofCostume = `n${number}-fof`;
+      if (
+        FOF_VALUE_SET.has(number) &&
+        (await this.hasCostume("NBs//Ten + One", fofCostume))
+      ) {
+        return { target: "NBs//Ten + One", costume: fofCostume };
+      }
+
+      const plain = `n${number}`;
+      if (await this.hasCostume("NBs//Ten + One", plain)) {
+        return { target: "NBs//Ten + One", costume: plain };
+      }
+    }
+
+    return null;
+  }
+
+  private async resolveNamedCostume(
+    targetName: string,
+    number: number,
+  ): Promise<string | null> {
     const named = officialCostumeName(number);
     const candidates = [named, String(number), `n${number}`];
 
     for (const name of candidates) {
-      if (name && (await this.hasCostume(OFFICIAL_TARGET, name))) {
+      if (name && (await this.hasCostume(targetName, name))) {
         return name;
       }
     }

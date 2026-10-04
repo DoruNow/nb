@@ -93,6 +93,14 @@ function onDigit(digit: number) {
   else addDigit(digit)
 }
 
+function operationFromKey(key: string): Operation | null {
+  if (key === "+" || key === "=") return "+"
+  if (key === "-" || key === "−") return "-"
+  if (key === "x" || key === "X" || key === "*" || key === "×") return "×"
+  if (key === "/" || key === "÷") return "÷"
+  return null
+}
+
 function onOperator(operation: Operation) {
   if (mode.value !== "add") return
   unlock()
@@ -153,14 +161,10 @@ function onKeydown(event: KeyboardEvent) {
 
   if (mode.value === "count") return
 
-  if (
-    event.key === "+" ||
-    event.key === "=" ||
-    event.key === "-" ||
-    event.key === "−"
-  ) {
+  const operation = operationFromKey(event.key)
+  if (operation) {
     event.preventDefault()
-    onOperator(event.key === "-" || event.key === "−" ? "-" : "+")
+    onOperator(operation)
   } else if (event.key === " " || event.code === "Space") {
     event.preventDefault()
     onEquals()

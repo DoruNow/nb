@@ -31,7 +31,7 @@ const hint = computed(() => {
   if (props.mode === "count") {
     return "Type the next number · Backspace undo · Clear resets"
   }
-  return "Type a number, then + or − · Space for = · Tab next box · Backspace undo · Clear resets"
+  return "Type a number, then + − × or ÷ · Space for = · Tab next box · Backspace undo · Clear resets"
 })
 </script>
 
@@ -124,6 +124,32 @@ const hint = computed(() => {
       >
         <span>−</span>
         <kbd>−</kbd>
+      </button>
+      <button
+        type="button"
+        class="op-key times"
+        tabindex="-1"
+        :class="{ pending: pendingOperator === '×' }"
+        :disabled="!canOperator"
+        aria-label="Times"
+        @mousedown.prevent
+        @click="emit('operator', '×')"
+      >
+        <span>×</span>
+        <kbd>x</kbd>
+      </button>
+      <button
+        type="button"
+        class="op-key divide"
+        tabindex="-1"
+        :class="{ pending: pendingOperator === '÷' }"
+        :disabled="!canOperator"
+        aria-label="Divide"
+        @mousedown.prevent
+        @click="emit('operator', '÷')"
+      >
+        <span>÷</span>
+        <kbd>/</kbd>
       </button>
       <button
         type="button"
@@ -300,7 +326,9 @@ const hint = computed(() => {
 }
 
 .op-key.plus.pending,
-.op-key.minus.pending {
+.op-key.minus.pending,
+.op-key.times.pending,
+.op-key.divide.pending {
   outline: 3px solid rgba(90, 100, 120, 0.4);
   outline-offset: 2px;
 }

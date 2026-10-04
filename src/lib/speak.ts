@@ -1,4 +1,9 @@
-export type SpokenOperator = "plus" | "minus" | "equals" | "times"
+export type SpokenOperator =
+  | "plus"
+  | "minus"
+  | "equals"
+  | "times"
+  | "divided by"
 
 /** The Scratch pack has n0–n100 (and place-value clips). Names above 100 are broken. */
 export const MAX_SPOKEN_NUMBER = 100
@@ -49,7 +54,7 @@ function wait(ms: number): Promise<void> {
 }
 
 /**
- * The .sb3 has no “plus” / “minus” / “equals” / “times” clips — only number names.
+ * The .sb3 has no “plus” / “minus” / “equals” / “times” / “divided by” clips — only number names.
  * Browser speech fills those words so the equation can be read in full.
  */
 export async function speakOperator(word: SpokenOperator): Promise<void> {
