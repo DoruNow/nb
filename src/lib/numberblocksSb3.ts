@@ -1265,9 +1265,17 @@ export class ScratchSb3Assets {
     });
   }
 
-  async playNumberName(value: number): Promise<void> {
-    if (!Number.isInteger(value) || value < 0 || value > 100) return;
+  /**
+   * Plays the pack clip `n{value}` when present (0–100).
+   * Returns false when the value is out of range or the sound is missing —
+   * callers can fall back to text-to-speech.
+   */
+  async playNumberName(value: number): Promise<boolean> {
+    if (!Number.isInteger(value) || value < 0 || value > 100) return false;
+    await this.load();
+    if (!this.soundsByName.has(`n${value}`)) return false;
     await this.playSound(`n${value}`);
+    return true;
   }
 
   stopAllSounds(): void {

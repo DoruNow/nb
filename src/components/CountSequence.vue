@@ -4,7 +4,7 @@ import type { CountColumn } from "../model/count"
 import { blockScale } from "../lib/numberblockScale"
 import { splitOfficialAddends } from "../lib/numberblocksSb3"
 import { numberblocksAssets } from "../lib/numberblocksSb3"
-import { canSpeakNumber } from "../lib/speak"
+import { speakNumberName } from "../lib/speak"
 import { glowFor, paintClass, paintStyle } from "../lib/numberblockColors"
 import MathInput from "./MathInput.vue"
 import NumberblockView from "./NumberblockView.vue"
@@ -93,8 +93,8 @@ function observeStage() {
 async function speakColumn(index: number) {
   hoppingIndex.value = index
   const value = props.columns[index]?.value
-  if (value !== null && canSpeakNumber(value)) {
-    await numberblocksAssets.playNumberName(value)
+  if (value !== null) {
+    await speakNumberName(value)
   } else {
     await sleep(220)
   }

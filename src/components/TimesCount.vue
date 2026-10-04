@@ -10,7 +10,7 @@ import {
   numberblocksAssets,
   splitOfficialAddends,
 } from "../lib/numberblocksSb3"
-import { canSpeakNumber, cancelSpeech, speakOperator } from "../lib/speak"
+import { cancelSpeech, speakNumberName, speakOperator } from "../lib/speak"
 import type { TimesField } from "../model/times"
 import MathInput from "./MathInput.vue"
 import NumberblockView from "./NumberblockView.vue"
@@ -500,8 +500,7 @@ async function flyClones(
 }
 
 async function playNamed(value: number) {
-  if (!canSpeakNumber(value)) return
-  await numberblocksAssets.playNumberName(value)
+  await speakNumberName(value)
 }
 
 async function growCounter(gen: number) {

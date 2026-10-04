@@ -5,7 +5,15 @@ import MathEquation from "./components/MathEquation.vue"
 import NumberKeyboard from "./components/NumberKeyboard.vue"
 import TimesCount from "./components/TimesCount.vue"
 import { numberblocksAssets } from "./lib/numberblocksSb3"
-import { unlockSpeech } from "./lib/speak"
+import {
+  isOtherSpeechLanguage,
+  refreshSpeechLanguageOptions,
+  setSpeechLanguage,
+  speechLanguage,
+  speechLanguageOptions,
+  unlockSpeech,
+  type SpeechLanguage,
+} from "./lib/speak"
 import { useEquation } from "./model/equation"
 import { useCount } from "./model/count"
 import { useTimesCount } from "./model/times"
@@ -73,6 +81,21 @@ const canUndo = computed(() => {
 function unlock() {
   void numberblocksAssets.unlockAudio()
   unlockSpeech()
+}
+
+const otherLanguageValue = computed(() =>
+  isOtherSpeechLanguage(speechLanguage.value) ? speechLanguage.value : "",
+)
+
+function onSpeechLanguage(language: SpeechLanguage) {
+  unlock()
+  setSpeechLanguage(language)
+}
+
+function onOtherSpeechLanguage(event: Event) {
+  const select = event.target
+  if (!(select instanceof HTMLSelectElement) || !select.value) return
+  onSpeechLanguage(select.value)
 }
 
 function setMode(next: Mode) {
@@ -174,45 +197,92 @@ function onKeydown(event: KeyboardEvent) {
   }
 }
 
+function onVoicesChanged() {
+  refreshSpeechLanguageOptions()
+}
+
 onMounted(() => {
   window.addEventListener("keydown", onKeydown)
+  refreshSpeechLanguageOptions()
+  window.speechSynthesis?.addEventListener("voiceschanged", onVoicesChanged)
 })
 
 onUnmounted(() => {
   window.removeEventListener("keydown", onKeydown)
+  window.speechSynthesis?.removeEventListener("voiceschanged", onVoicesChanged)
 })
 </script>
 
 <template>
   <div class="room">
-    <header class="modes" role="tablist" aria-label="Mode">
-      <button
-        type="button"
-        role="tab"
-        :aria-selected="mode === 'add'"
-        :class="{ on: mode === 'add' }"
-        @click="setMode('add')"
-      >
-        Add
-      </button>
-      <button
-        type="button"
-        role="tab"
-        :aria-selected="mode === 'count'"
-        :class="{ on: mode === 'count' }"
-        @click="setMode('count')"
-      >
-        Count
-      </button>
-      <button
-        type="button"
-        role="tab"
-        :aria-selected="mode === 'times'"
-        :class="{ on: mode === 'times' }"
-        @click="setMode('times')"
-      >
-        Times
-      </button>
+    <header class="topbar">
+      <div class="modes" role="tablist" aria-label="Mode">
+        <button
+          type="button"
+          role="tab"
+          :aria-selected="mode === 'add'"
+          :class="{ on: mode === 'add' }"
+          @click="setMode('add')"
+        >
+          Add
+        </button>
+        <button
+          type="button"
+          role="tab"
+          :aria-selected="mode === 'count'"
+          :class="{ on: mode === 'count' }"
+          @click="setMode('count')"
+        >
+          Count
+        </button>
+        <button
+          type="button"
+          role="tab"
+          :aria-selected="mode === 'times'"
+          :class="{ on: mode === 'times' }"
+          @click="setMode('times')"
+        >
+          Times
+        </button>
+      </div>
+      <div class="langs" role="group" aria-label="Spraaktaal">
+        <button
+          type="button"
+          :aria-pressed="speechLanguage === 'nl'"
+          :class="{ on: speechLanguage === 'nl' }"
+          @click="onSpeechLanguage('nl')"
+        >
+          NL
+        </button>
+        <button
+          type="button"
+          :aria-pressed="speechLanguage === 'en'"
+          :class="{ on: speechLanguage === 'en' }"
+          @click="onSpeechLanguage('en')"
+        >
+          EN
+        </button>
+        <label class="lang-other" :class="{ on: !!otherLanguageValue }">
+          <span class="sr-only">Andere taal</span>
+          <select
+            :value="otherLanguageValue"
+            aria-label="Andere spraaktaal"
+            @change="onOtherSpeechLanguage"
+            @focus="unlock"
+          >
+            <option value="" disabled>
+              {{ otherLanguageValue ? "Andere…" : "…" }}
+            </option>
+            <option
+              v-for="option in speechLanguageOptions"
+              :key="option.tag"
+              :value="option.tag"
+            >
+              {{ option.label }}
+            </option>
+          </select>
+        </label>
+      </div>
     </header>
 
     <div class="playfield">
@@ -302,14 +372,29 @@ onUnmounted(() => {
   background-repeat: no-repeat;
 }
 
-.modes {
+.topbar {
   display: flex;
+  align-items: center;
   justify-content: center;
-  gap: 0.35rem;
+  position: relative;
   padding: 0.65rem 1rem 0;
 }
 
-.modes button {
+.modes,
+.langs {
+  display: flex;
+  gap: 0.35rem;
+}
+
+.langs {
+  position: absolute;
+  right: 1rem;
+  top: 0.65rem;
+}
+
+.modes button,
+.langs button,
+.lang-other {
   appearance: none;
   margin: 0;
   border: 0;
@@ -323,10 +408,67 @@ onUnmounted(() => {
   cursor: pointer;
 }
 
-.modes button.on {
+.langs button,
+.lang-other {
+  padding: 0.28rem 0.7rem;
+  font-size: 0.95rem;
+}
+
+.lang-other {
+  display: inline-flex;
+  align-items: center;
+  max-width: 9.5rem;
+}
+
+.lang-other select {
+  appearance: none;
+  width: 100%;
+  margin: 0;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.modes button.on,
+.langs button.on,
+.lang-other.on {
   background: rgba(255, 255, 255, 0.78);
   color: #1a1a1a;
   box-shadow: 0 0 0 1px rgba(40, 20, 0, 0.06);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (max-width: 640px) {
+  .topbar {
+    justify-content: space-between;
+    gap: 0.4rem;
+  }
+
+  .langs {
+    position: static;
+  }
+
+  .lang-other {
+    max-width: 7.5rem;
+  }
 }
 
 .band {

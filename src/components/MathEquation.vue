@@ -7,7 +7,7 @@ import {
   numberblocksAssets,
   splitOfficialAddends,
 } from "../lib/numberblocksSb3"
-import { canSpeakNumber, cancelSpeech, speakOperator } from "../lib/speak"
+import { cancelSpeech, speakNumberName, speakOperator } from "../lib/speak"
 import MathInput from "./MathInput.vue"
 import NumberblockView from "./NumberblockView.vue"
 
@@ -185,8 +185,8 @@ async function speakColumn(column: Column, gen: number) {
   else speakingId.value = column.id
 
   const value = column.value
-  if (value !== null && canSpeakNumber(value)) {
-    await numberblocksAssets.playNumberName(value)
+  if (value !== null) {
+    await speakNumberName(value)
   } else {
     await sleep(280)
   }
