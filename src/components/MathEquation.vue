@@ -1,12 +1,8 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue"
+import { computed, nextTick, onUnmounted, ref, watch } from "vue"
 import type { Column, ColumnId } from "../model/equation"
 import type { Operation } from "../lib/math"
-import { blockScale } from "../lib/numberblockScale"
-import {
-  numberblocksAssets,
-  splitOfficialAddends,
-} from "../lib/numberblocksSb3"
+import { numberblocksAssets } from "../lib/numberblocksSb3"
 import { cancelSpeech, speakNumberName, speakOperator } from "../lib/speak"
 import MathInput from "./MathInput.vue"
 import NumberblockView from "./NumberblockView.vue"
@@ -34,8 +30,6 @@ const emit = defineEmits<{
 }>()
 
 const root = ref<HTMLElement | null>(null)
-const availableHeight = ref(280)
-const columnWidth = ref(200)
 const clonesOn = ref(false)
 const flying = ref(false)
 const revealed = ref(false)
@@ -50,15 +44,10 @@ const figureEls = new Map<string, HTMLElement>()
 
 let mergeTimer: ReturnType<typeof setTimeout> | undefined
 let popTimer: ReturnType<typeof setTimeout> | undefined
-let resize: ResizeObserver | undefined
 
 function setFigureRef(id: string, el: unknown) {
   if (el instanceof HTMLElement) figureEls.set(id, el)
   else figureEls.delete(id)
-}
-
-function partsFor(value: number | null) {
-  return value === null ? [] : splitOfficialAddends(value)
 }
 
 const termColumns = computed(() =>
@@ -67,14 +56,6 @@ const termColumns = computed(() =>
 
 const answerColumn = computed(
   () => props.columns.find((column) => column.kind === "answer") ?? null,
-)
-
-const pxPerUnit = computed(() =>
-  blockScale({
-    figures: props.columns.map((column) => partsFor(column.value)),
-    columnWidth: columnWidth.value,
-    availableHeight: availableHeight.value,
-  }),
 )
 
 const showAnswer = computed(() => props.correct !== true || revealed.value)
@@ -282,24 +263,6 @@ function resetMerge() {
   speakingOp.value = null
 }
 
-function measureStage() {
-  const first = props.columns[0]
-  const figure = first ? figureEls.get(first.id) : undefined
-  if (!figure) return
-  availableHeight.value = Math.max(80, figure.clientHeight - 8)
-  columnWidth.value = Math.max(48, figure.clientWidth)
-}
-
-function observeStage() {
-  resize?.disconnect()
-  resize = new ResizeObserver(measureStage)
-  if (root.value) resize.observe(root.value)
-  const first = props.columns[0]
-  const figure = first ? figureEls.get(first.id) : undefined
-  if (figure) resize.observe(figure)
-  measureStage()
-}
-
 watch(
   () => props.correct,
   (value) => {
@@ -308,23 +271,10 @@ watch(
   },
 )
 
-watch(
-  () => props.columns.map((column) => column.id).join(),
-  async () => {
-    await nextTick()
-    observeStage()
-  },
-)
-
-onMounted(() => {
-  observeStage()
-})
-
 onUnmounted(() => {
   celebrateGen += 1
   cancelSpeech()
   numberblocksAssets.stopAllSounds()
-  resize?.disconnect()
   clearTimers()
 })
 </script>
@@ -361,8 +311,8 @@ onUnmounted(() => {
           :class="{ waiting: column.kind === 'answer' && !showAnswer }"
         >
           <NumberblockView
+            fill
             :value="column.value"
-            :px-per-unit="pxPerUnit"
             :jumping="column.kind === 'answer' && popping"
             :speaking="column.kind === 'term' && speakingId === column.id"
           />
@@ -378,7 +328,7 @@ onUnmounted(() => {
         :class="{ flying }"
         :style="cloneStyle(box)"
       >
-        <NumberblockView :value="cloneValues[index]" :px-per-unit="pxPerUnit" />
+        <NumberblockView fill :value="cloneValues[index]" />
       </div>
     </div>
   </div>
@@ -407,6 +357,7 @@ onUnmounted(() => {
 }
 
 .figure {
+  position: relative;
   display: flex;
   align-items: flex-end;
   justify-content: center;

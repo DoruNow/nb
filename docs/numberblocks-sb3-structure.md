@@ -106,7 +106,7 @@ Menu//                    # Generator UI controls
 
 | Target | Costumes | Sounds | Blocks | Notes |
 | --- | ---: | ---: | ---: | --- |
-| `10` | 20 | 1 | 0 | 20 non-`nN` costumes |
+| `10` | 20 | 1 | 0 | costumes `01`–`20` mean 10, 20, … 200 |
 | `Body Parts` | 3 | 1 | 0 | other: eyes, mouths, limbs |
 | `Earth` | 8 | 1 | 40 | plain `nN`: 1–8 (8) |
 | `editor` | 5 | 1 | 0 | other: 모양 1, colors, letters, numbers, mathematical functions |
@@ -344,6 +344,10 @@ Related mode sprites (not used by the current web mapper yet):
 
 Single-costume “hero” drawings for round / special large values:
 
+#### `assets//10`
+
+Costumes are labeled `01`–`20` and are ten times that label: `01` is 10, `18` is 180, `20` is 200. Official faces still win for 10–100. 110–190 are exact costumes (177 stays 100+77). 200 uses this full-size costume; `Large Numbers` / `Two Hundred` is a miniature and is not used.
+
 #### `assets//Large Numbers`
 ```
 One Hundred
@@ -450,7 +454,7 @@ Implemented in [`numberblocksSb3.ts`](../src/lib/numberblocksSb3.ts):
 
 1. **Exact named face** in `assets//Official Numberblocks 0-100`.
 2. **FOF named face** in `assets//Figured-Out Frenzy` (44, 65, 66, 68, 75, 77, 84, 88, 91, 96, 99).
-3. **Named large costume** (`Large Numbers`, `Thousands*`, `Millions and more`) — round values are greedy atoms; odd specials (2024, 97104, …) are exact-only.
+3. **Named large costume** (`assets//10`, `Large Numbers`, `Thousands*`, `Millions and more`) — round values are greedy atoms; odd specials (2024, 97104, …) and tens-pack 110–190 are exact-only. `assets//10` costumes `01`–`20` are 10–200. Official faces still win for 10–100.
 4. Else if `0 ≤ n ≤ 99`: `NBs//Ten + One` / `n{n}-fof` when `n` is in `figured-out frenzy guys`, else `n{n}`.
 5. Else **additive character split** via `splitOfficialAddends()` over official ∪ FOF ∪ round larges (so every 0–100 is an atom).
 6. Place-value compose via `NUMBER_GROUPS` (`getNumberParts`) remains available for non-character layouts.
@@ -461,7 +465,9 @@ Examples:
 77   -> Seventy-Seven          (FOF named)
 144  -> 100 + 44               (One Hundred + Forty-Four)
 177  -> 100 + 77
-200  -> Two Hundred            (Large Numbers)
+180  -> assets//10 / 18        (exact; not 100+80)
+190  -> assets//10 / 19
+200  -> assets//10 / 20        (full size)
 1234 -> 1000 + 200 + 34
 ```
 

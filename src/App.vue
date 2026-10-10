@@ -4,6 +4,7 @@ import CountSequence from "./components/CountSequence.vue"
 import MathEquation from "./components/MathEquation.vue"
 import NumberKeyboard from "./components/NumberKeyboard.vue"
 import TimesCount from "./components/TimesCount.vue"
+import TimesTable from "./components/TimesTable.vue"
 import { numberblocksAssets } from "./lib/numberblocksSb3"
 import {
   isOtherSpeechLanguage,
@@ -17,11 +18,13 @@ import {
 import { useEquation } from "./model/equation"
 import { useCount } from "./model/count"
 import { useTimesCount } from "./model/times"
-import type { Operation } from "./lib/math"
+import { TABLE_MAX, type Operation } from "./lib/math"
 
-type Mode = "add" | "count" | "times"
+type Mode = "add" | "count" | "times" | "table"
 
 const mode = ref<Mode>("add")
+const tableMax = ref(TABLE_MAX)
+const tableMaxText = ref(String(TABLE_MAX))
 
 const {
   columns: addColumns,
@@ -72,7 +75,8 @@ const {
 const canUndo = computed(() => {
   if (mode.value === "add") return addCanUndo.value
   if (mode.value === "count") return countCanUndo.value
-  return timesCanUndo.value
+  if (mode.value === "times") return timesCanUndo.value
+  return false
 })
 
 function unlock() {
@@ -100,7 +104,22 @@ function setMode(next: Mode) {
   mode.value = next
   if (next === "add") addClear()
   else if (next === "count") countClear()
-  else timesClear()
+  else if (next === "times") timesClear()
+}
+
+function onTableMaxInput(event: Event) {
+  const input = event.target as HTMLInputElement
+  const raw = input.value.replace(/\D/g, "").slice(0, 2)
+  input.value = raw
+  tableMaxText.value = raw
+  const n = Number(raw)
+  if (Number.isInteger(n) && n >= 1 && n <= TABLE_MAX) {
+    tableMax.value = n
+  }
+}
+
+function commitTableMax() {
+  tableMaxText.value = String(tableMax.value)
 }
 
 function onDigit(digit: number) {
@@ -147,6 +166,14 @@ function onClear() {
 
 function onKeydown(event: KeyboardEvent) {
   if (event.metaKey || event.ctrlKey || event.altKey) return
+  if (mode.value === "table") return
+  const target = event.target
+  if (
+    target instanceof HTMLElement &&
+    (target.tagName === "INPUT" || target.tagName === "TEXTAREA")
+  ) {
+    return
+  }
 
   if (mode.value === "times") {
     console.log("[times] keydown", event.key, timesDebugState({ mode: mode.value }))
@@ -211,9 +238,10 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="room">
+  <div class="room" :class="{ table: mode === 'table' }">
     <header class="topbar">
-      <div class="modes" role="tablist" aria-label="Mode">
+      <div class="nav">
+        <div class="modes" role="tablist" aria-label="Mode">
         <button
           type="button"
           role="tab"
@@ -241,7 +269,31 @@ onUnmounted(() => {
         >
           Times
         </button>
+        <button
+          type="button"
+          role="tab"
+          :aria-selected="mode === 'table'"
+          :class="{ on: mode === 'table' }"
+          @click="setMode('table')"
+        >
+          Table
+        </button>
+        </div>
+        <RouterLink class="sprites-link" to="/sprites">Sprites</RouterLink>
       </div>
+      <label v-if="mode === 'table'" class="table-max">
+        <span>Up to</span>
+        <input
+          :value="tableMaxText"
+          inputmode="numeric"
+          maxlength="2"
+          autocomplete="off"
+          aria-label="Show the table up to this number"
+          @input="onTableMaxInput"
+          @blur="commitTableMax"
+          @keydown.enter.prevent="commitTableMax"
+        />
+      </label>
       <div class="langs" role="group" aria-label="Spraaktaal">
         <button
           type="button"
@@ -300,7 +352,7 @@ onUnmounted(() => {
         :just-locked-index="justLockedIndex"
       />
       <TimesCount
-        v-else
+        v-else-if="mode === 'times'"
         :step="timesStep"
         :step-draft="timesStepDraft"
         :figured="timesFigured"
@@ -314,12 +366,14 @@ onUnmounted(() => {
         @commit-step="timesCommitStep"
         @clear-draft="timesClearDraft"
       />
+      <TimesTable v-else :max="tableMax" />
     </div>
 
-    <footer class="band bottom">
+    <footer v-if="mode !== 'table'" class="band bottom">
       <NumberKeyboard
         :can-undo="canUndo"
         :mode="mode"
+        :picking-step="mode === 'times' && timesStep === null"
         @undo="onUndo"
         @clear="onClear"
       />
@@ -362,6 +416,11 @@ onUnmounted(() => {
   background-repeat: no-repeat;
 }
 
+.room.table {
+  background: var(--wall);
+  background-image: none;
+}
+
 .topbar {
   display: flex;
   align-items: center;
@@ -370,19 +429,52 @@ onUnmounted(() => {
   padding: 0.65rem 1rem 0;
 }
 
+.nav,
 .modes,
 .langs {
   display: flex;
+  align-items: center;
   gap: 0.35rem;
 }
 
-.langs {
+.langs,
+.table-max {
   position: absolute;
-  right: 1rem;
   top: 0.65rem;
 }
 
+.langs {
+  right: 1rem;
+}
+
+.table-max {
+  left: 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: #7a746c;
+  font-size: 1.05rem;
+  font-weight: 800;
+}
+
+.table-max input {
+  width: 2.6rem;
+  margin: 0;
+  padding: 0.22rem 0.2rem;
+  border: 0;
+  border-radius: 0.7rem;
+  background: rgba(255, 255, 255, 0.78);
+  color: #1a1a1a;
+  font: inherit;
+  font-size: 1.05rem;
+  font-weight: 800;
+  line-height: 1;
+  text-align: center;
+  box-shadow: 0 0 0 1px rgba(40, 20, 0, 0.06);
+}
+
 .modes button,
+.sprites-link,
 .langs button,
 .lang-other {
   appearance: none;
@@ -396,6 +488,7 @@ onUnmounted(() => {
   font-size: 1.05rem;
   font-weight: 800;
   cursor: pointer;
+  text-decoration: none;
 }
 
 .langs button,
@@ -452,7 +545,8 @@ onUnmounted(() => {
     gap: 0.4rem;
   }
 
-  .langs {
+  .langs,
+  .table-max {
     position: static;
   }
 
@@ -474,6 +568,10 @@ onUnmounted(() => {
   min-width: 0;
   min-height: 0;
   padding: 0.7rem 1rem 0.2rem;
+}
+
+.room.table .playfield {
+  padding: 0.45rem 0.7rem 0.7rem;
 }
 
 .bottom {

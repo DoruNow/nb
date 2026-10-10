@@ -28,6 +28,14 @@ import JSZip, { type JSZipObject } from "jszip";
  *   //   { target: "NBs//Ten + One",         costume: "n34", ... }
  *   // ]
  *
+ *   // Growing times table (four spots, four rays):
+ *   const fourTimes = await assets.getGrowingTimesTableUrl(4);
+ *
+ *   // Times Table character, standing or flying:
+ *   const threeRay = await assets.getTimesTableCharacterUrl(3, "ray");
+ *
+ *   const resource = await assets.resource();
+ *
  * See docs/numberblocks-sb3-structure.md for the full target/costume tree.
  */
 
@@ -46,6 +54,18 @@ export type ScratchTarget = {
   name: string;
   costumes: ScratchCostume[];
   sounds?: ScratchSound[];
+  currentCostume?: number;
+  volume?: number;
+  layerOrder?: number;
+  tempo?: number;
+  videoTransparency?: number;
+  videoState?: string;
+  textToSpeechLanguage?: string | null;
+  blocks?: Record<string, unknown>;
+  variables?: Record<string, unknown>;
+  lists?: Record<string, unknown>;
+  broadcasts?: Record<string, unknown>;
+  comments?: Record<string, unknown>;
 
   // Sprite transform metadata. These fields are absent on the Stage.
   x?: number;
@@ -54,7 +74,89 @@ export type ScratchTarget = {
   direction?: number;
   visible?: boolean;
   rotationStyle?: string;
+  draggable?: boolean;
+};
+
+export type ScratchMonitor = {
+  id: string;
+  mode: string;
+  opcode: string;
+  params: Record<string, unknown>;
+  spriteName: string | null;
+  value: unknown;
+  visible: boolean;
+  x?: number;
+  y?: number;
+  width?: number;
+  height?: number;
+  sliderMin?: number;
+  sliderMax?: number;
+  isDiscrete?: boolean;
+};
+
+export type ScratchNamedValue = {
+  id: string;
+  name: string;
+  value: unknown;
+};
+
+export type ScratchBroadcast = {
+  id: string;
+  name: string;
+};
+
+/** One Scratch sprite, with costumes and sounds, and without script blocks. */
+export type ScratchResourceTarget = {
+  kind: "target";
+  /** Full Scratch name, including a `Group//` prefix when it has one. */
+  name: string;
+  /** Name after the last `//`. */
+  label: string;
+  isStage: boolean;
+  currentCostume?: number;
+  volume?: number;
   layerOrder?: number;
+  tempo?: number;
+  videoTransparency?: number;
+  videoState?: string;
+  textToSpeechLanguage?: string | null;
+  visible?: boolean;
+  x?: number;
+  y?: number;
+  size?: number;
+  direction?: number;
+  draggable?: boolean;
+  rotationStyle?: string;
+  blockCount: number;
+  commentCount: number;
+  costumes: ScratchCostume[];
+  sounds: ScratchSound[];
+  variables: ScratchNamedValue[];
+  lists: ScratchNamedValue[];
+  broadcasts: ScratchBroadcast[];
+};
+
+/** A `Group//` folder. The project uses a single level, but the tree allows more. */
+export type ScratchResourceFolder = {
+  kind: "folder";
+  name: string;
+  children: ScratchResourceNode[];
+};
+
+export type ScratchResourceNode = ScratchResourceFolder | ScratchResourceTarget;
+
+export type ScratchResource = {
+  meta: {
+    semver?: string;
+    vm?: string;
+    agent?: string;
+  };
+  extensions: unknown[];
+  monitors: ScratchMonitor[];
+  targetCount: number;
+  costumeCount: number;
+  soundCount: number;
+  tree: ScratchResourceNode[];
 };
 
 export type ScratchSound = {
@@ -68,6 +170,9 @@ export type ScratchSound = {
 
 type ScratchProject = {
   targets: ScratchTarget[];
+  monitors?: ScratchMonitor[];
+  extensions?: unknown[];
+  meta?: ScratchResource["meta"];
 };
 
 export type SvgAssetRef = {
@@ -200,6 +305,28 @@ export const MAX_NUMBERBLOCK_VALUE = 99_999_999_999_999n;
 
 /** Official character costumes (faces, hair, limbs). */
 const OFFICIAL_TARGET = "assets//Official Numberblocks 0-100";
+const ONES_TARGET = "NBs//Ten + One";
+/**
+ * Costumes are named "01"…"20" and mean 10, 20, … 200.
+ * Indexed after the official faces so Ten–One Hundred stay the TV drawings,
+ * and before Large Numbers so 200 keeps this full-size costume.
+ */
+const TENS_PACK_TARGET = "assets//10";
+
+/**
+ * Named character packs, searched in this order.
+ * The generator sprites (NBs//) are a fallback after these miss.
+ */
+const CHARACTER_TARGETS = [
+  OFFICIAL_TARGET,
+  "assets//Figured-Out Frenzy",
+  TENS_PACK_TARGET,
+  "assets//Large Numbers",
+  "assets//Thousands (Small)",
+  "assets//Ten Thousands",
+  "assets//Hundred Thousands",
+  "assets//Millions and more",
+] as const;
 
 /** Extra named faces not present in the official 0–100 pack. */
 const FOF_TARGET = "assets//Figured-Out Frenzy";
@@ -228,12 +355,42 @@ type NamedLargeCostume = {
 };
 
 /**
+ * `assets//10` names a count of tens: costume "01" is 10, "18" is 180, "20" is 200.
+ * 10–190 are exact-only. 10–100 already have official faces (those win at
+ * lookup); 110–190 must not break greedy splits such as 177 → 100+77.
+ * 200 stays a round atom, using this full-size costume rather than the
+ * miniature "Two Hundred" in Large Numbers.
+ */
+const TENS_PACK_COSTUMES: readonly NamedLargeCostume[] = Array.from(
+  { length: 20 },
+  (_, offset): NamedLargeCostume => {
+    const count = offset + 1;
+    return {
+      value: count * 10,
+      target: TENS_PACK_TARGET,
+      costume: String(count).padStart(2, "0"),
+      exactOnly: count !== 20,
+    };
+  },
+);
+
+/** Costume title on `assets//10`, or null when it is not "01"…"20". */
+function tensPackCostumeValue(name: string): number | null {
+  const match = /^(\d{2})$/.exec(name);
+  if (!match) return null;
+  const count = Number(match[1]);
+  if (count < 1 || count > 20) return null;
+  return count * 10;
+}
+
+/**
  * Named large-number costumes from the Scratch asset packs.
  * Round values participate in greedy splitting; odd specials are exact-only.
  */
 const NAMED_LARGE_COSTUMES: readonly NamedLargeCostume[] = [
+  ...TENS_PACK_COSTUMES,
   // Hundreds / round powers — assets//Large Numbers
-  { value: 200, target: "assets//Large Numbers", costume: "Two Hundred" },
+  // 200 is the full-size assets//10 costume "20", not the miniature here.
   { value: 300, target: "assets//Large Numbers", costume: "Three Hundred" },
   { value: 400, target: "assets//Large Numbers", costume: "Four Hundred" },
   { value: 500, target: "assets//Large Numbers", costume: "Five Hundred" },
@@ -939,10 +1096,9 @@ const TENS_NAMES = [
   "Ninety",
 ] as const;
 
-function officialCostumeName(number: number): string | null {
-  if (number === 100) return "One Hundred";
+function belowHundredName(number: number): string | null {
   if (number >= 0 && number < 20) return UNDER_TWENTY[number];
-  if (number < 0 || number > 100) return null;
+  if (number < 0 || number >= 100) return null;
 
   const tens = Math.floor(number / 10);
   const ones = number % 10;
@@ -952,7 +1108,130 @@ function officialCostumeName(number: number): string | null {
   return `${tensName}-${UNDER_TWENTY[ones]}`;
 }
 
-/** Values that have a named official costume in the Scratch pack. */
+function hundredGroupName(hundreds: number): string | null {
+  if (hundreds < 1 || hundreds > 9) return null;
+  if (hundreds === 1) return "One Hundred";
+  return `${UNDER_TWENTY[hundreds]} Hundred`;
+}
+
+/**
+ * Names the Scratch pack might use for an exact number.
+ * 121 → "One Hundred and Twenty-One", "121", "n121", ...
+ */
+export function costumeNameCandidates(number: number): string[] {
+  const names = new Set<string>([String(number), `n${number}`]);
+  const below = belowHundredName(number);
+  if (below) names.add(below);
+  if (number === 100) names.add("One Hundred");
+
+  if (number > 100 && number < 1000) {
+    const head = hundredGroupName(Math.floor(number / 100));
+    const rest = number % 100;
+    if (head) {
+      if (rest === 0) names.add(head);
+      else {
+        const tail = belowHundredName(rest);
+        if (tail) {
+          names.add(`${head} and ${tail}`);
+          names.add(`${head} ${tail}`);
+        }
+      }
+    }
+  }
+
+  return [...names];
+}
+
+const SMALL_WORDS: Record<string, number> = {
+  zero: 0,
+  one: 1,
+  two: 2,
+  three: 3,
+  four: 4,
+  five: 5,
+  six: 6,
+  seven: 7,
+  eight: 8,
+  nine: 9,
+  ten: 10,
+  eleven: 11,
+  twelve: 12,
+  thirteen: 13,
+  fourteen: 14,
+  fifteen: 15,
+  sixteen: 16,
+  seventeen: 17,
+  eighteen: 18,
+  nineteen: 19,
+  twenty: 20,
+  thirty: 30,
+  forty: 40,
+  fifty: 50,
+  sixty: 60,
+  seventy: 70,
+  eighty: 80,
+  ninety: 90,
+};
+
+const MAGNITUDE_WORDS: Record<string, number> = {
+  thousand: 1_000,
+  million: 1_000_000,
+  billion: 1_000_000_000,
+  trillion: 1_000_000_000_000,
+};
+
+/** Parse a Scratch costume title such as "One Hundred and Twenty-One". */
+export function parseCostumeNumber(name: string): number | null {
+  const stripped = name
+    .toLowerCase()
+    .replace(/\(.*?\)/g, " ")
+    .replace(/[^a-z\s-]/g, " ")
+    .replace(/\band\b/g, " ")
+    .replace(/-/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!stripped) return null;
+
+  let total = 0;
+  let current = 0;
+  let used = 0;
+
+  for (const word of stripped.split(" ")) {
+    if (word === "hundred") {
+      current = (current || 1) * 100;
+      used += 1;
+      continue;
+    }
+    const small = SMALL_WORDS[word];
+    if (small !== undefined) {
+      current += small;
+      used += 1;
+      continue;
+    }
+    const magnitude = MAGNITUDE_WORDS[word];
+    if (magnitude !== undefined) {
+      current = (current || 1) * magnitude;
+      total += current;
+      current = 0;
+      used += 1;
+      continue;
+    }
+    return null;
+  }
+
+  if (used === 0) return null;
+  return total + current;
+}
+
+function costumePreference(name: string): number {
+  const lower = name.toLowerCase();
+  if (/\(old\)/.test(lower)) return 4;
+  if (/\(compound\)/.test(lower)) return 3;
+  if (name.includes("(")) return 2;
+  return 1;
+}
+
+/** TV-official 0–100 characters (not Figured-Out Frenzy). */
 export const OFFICIAL_NUMBERBLOCK_VALUES = [
   100, 90, 81, 80, 72, 70, 64, 63, 60, 56, 55, 54, 50, 49, 48, 45, 42, 40, 39,
   38, 37, 36, 35, 34, 33, 32, 31, 30, 29, 28, 27, 26, 25, 24, 23, 22, 21, 20,
@@ -975,7 +1254,8 @@ const EXACT_ONLY_LARGE = new Set<number>(
 /**
  * Atomic character values used when splitting a composite number.
  * Official ∪ FOF covers every integer 0–100; round large costumes are
- * included so 200 stays “Two Hundred” instead of 100+100.
+ * included so 200 stays the full-size tens-pack costume instead of 100+100.
+ * Exact tens 110–190 are characters too, but they are not greedy pieces.
  */
 export const CHARACTER_NUMBERBLOCK_VALUES: readonly number[] = [
   ...NAMED_LARGE_COSTUMES.filter((entry) => !entry.exactOnly).map(
@@ -990,10 +1270,32 @@ export const CHARACTER_NUMBERBLOCK_VALUES: readonly number[] = [
 const CHARACTER_VALUE_SET = new Set<number>(CHARACTER_NUMBERBLOCK_VALUES);
 
 /**
+ * Place-value chunks matching the Scratch generator sprites.
+ * 121 → 100 + 21 (hundreds n1 beside tens-and-ones n21).
+ */
+export function placeValueParts(value: number): number[] {
+  if (!Number.isInteger(value) || value < 0) return [];
+  if (value === 0) return [0];
+
+  const number = BigInt(value);
+  const parts: number[] = [];
+  for (const group of NUMBER_GROUPS) {
+    const chunk = Number((number / group.divisor) % group.base);
+    if (chunk === 0) continue;
+    parts.push(Number(BigInt(chunk) * group.divisor));
+  }
+  parts.reverse();
+  return parts;
+}
+
+/**
  * Split a number into Numberblock character addends.
  *
- * Prefers official faces, Figured-Out Frenzy characters, and named large
- * costumes as atoms — so 144 → 100+44 (not 100+42+2) and 77 → 77.
+ * A known character stays one figure — official faces, Figured-Out Frenzy
+ * characters, and named large costumes — so 77 stays 77 and 0–99 are never
+ * Forty + One. Other values use those characters as atoms: 144 → 100+44,
+ * not 100+42+2, 180 stays the tens-pack costume instead of 100+80, and
+ * 200 stays that full-size costume instead of 100+100.
  */
 export function splitOfficialAddends(value: number): number[] {
   if (!Number.isInteger(value) || value < 0) return [];
@@ -1017,14 +1319,225 @@ export function splitOfficialAddends(value: number): number[] {
 function viewBoxSize(svg: string): { width: number; height: number } {
   const match = svg.match(/viewBox\s*=\s*"([^"]+)"/i);
   if (!match) return { width: 1, height: 1 };
-  const box = match[1]
-    .trim()
-    .split(/[\s,]+/)
-    .map(Number);
-  if (box.length !== 4 || box.some((n) => !Number.isFinite(n) || n <= 0)) {
-    return { width: 1, height: 1 };
+  const parsed = parseViewBox(match[1]);
+  if (!parsed) return { width: 1, height: 1 };
+  return { width: parsed.width, height: parsed.height };
+}
+
+const SHAPE_SELECTOR = "path, ellipse, circle, rect, polygon, polyline";
+
+function parseViewBox(value: string | null): {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+} | null {
+  if (!value) return null;
+  const box = value.trim().split(/[\s,]+/).map(Number);
+  if (
+    box.length !== 4 ||
+    box.some((n) => !Number.isFinite(n)) ||
+    box[2] <= 0 ||
+    box[3] <= 0
+  ) {
+    return null;
   }
-  return { width: box[2], height: box[3] };
+  return { x: box[0], y: box[1], width: box[2], height: box[3] };
+}
+
+function fillOf(el: Element): string {
+  return (el.getAttribute("fill") ?? "").trim();
+}
+
+function isUrlFill(fill: string): boolean {
+  return /^url\(/i.test(fill);
+}
+
+function markPart(el: Element, part: "limb" | "face" | "numeral"): void {
+  el.setAttribute("data-part", part);
+  if (el.tagName.toLowerCase() === "g") {
+    for (const child of el.querySelectorAll(SHAPE_SELECTOR)) {
+      if (!child.getAttribute("data-part")) child.setAttribute("data-part", part);
+    }
+  }
+}
+
+function shapeBounds(el: Element): PathBox | null {
+  const d = el.getAttribute("d");
+  if (d) return pathBBox(d);
+  const x = Number(el.getAttribute("x") ?? el.getAttribute("cx") ?? 0);
+  const y = Number(el.getAttribute("y") ?? el.getAttribute("cy") ?? 0);
+  const radius = Number(el.getAttribute("r") ?? 0);
+  const width = Number(el.getAttribute("width") ?? (radius ? radius * 2 : 0));
+  const height = Number(el.getAttribute("height") ?? (radius ? radius * 2 : 0));
+  if (![x, y, width, height].every(Number.isFinite) || (width <= 0 && height <= 0)) {
+    return null;
+  }
+  return { minX: x, minY: y, maxX: x + width, maxY: y + height };
+}
+
+function unionBoxes(boxes: PathBox[]): PathBox | null {
+  if (boxes.length === 0) return null;
+  return {
+    minX: Math.min(...boxes.map((box) => box.minX)),
+    minY: Math.min(...boxes.map((box) => box.minY)),
+    maxX: Math.max(...boxes.map((box) => box.maxX)),
+    maxY: Math.max(...boxes.map((box) => box.maxY)),
+  };
+}
+
+export type NumberblockScene = {
+  svg: string;
+  width: number;
+  height: number;
+  viewX: number;
+  viewY: number;
+  body: { x: number; y: number; width: number; height: number };
+};
+
+function sceneFromSvg(svg: string): NumberblockScene {
+  const match = svg.match(/viewBox\s*=\s*"([^"]+)"/i);
+  const view = parseViewBox(match?.[1] ?? null) ?? {
+    x: 0,
+    y: 0,
+    width: 1,
+    height: 1,
+  };
+  return {
+    svg,
+    width: view.width,
+    height: view.height,
+    viewX: view.x,
+    viewY: view.y,
+    body: { x: view.x, y: view.y, width: view.width, height: view.height },
+  };
+}
+
+/**
+ * Tag official costume paths so a table cell can keep cube size and
+ * fade eyes and limbs on, instead of swapping to a different drawing.
+ */
+export function decorateCostumeLife(svg: string): NumberblockScene {
+  const Parser = globalThis.DOMParser;
+  const Serializer = globalThis.XMLSerializer;
+  if (typeof Parser === "undefined" || typeof Serializer === "undefined") {
+    return sceneFromSvg(svg);
+  }
+
+  const doc = new Parser().parseFromString(svg, "image/svg+xml");
+  const root = doc.documentElement;
+  if (root.querySelector("parsererror")) return sceneFromSvg(svg);
+
+  const view =
+    parseViewBox(root.getAttribute("viewBox")) ?? sceneFromSvg(svg).body;
+  const shapes = [...root.querySelectorAll(SHAPE_SELECTOR)];
+
+  for (const el of shapes) {
+    if (isUrlFill(fillOf(el))) markPart(el, "limb");
+  }
+
+  const groups = [...root.querySelectorAll("g")].reverse();
+  for (const group of groups) {
+    const local = [...group.querySelectorAll(SHAPE_SELECTOR)];
+    if (!local.some((el) => isUrlFill(fillOf(el)))) continue;
+    const union = unionBoxes(
+      local
+        .map((el) => shapeBounds(el))
+        .filter((box): box is PathBox => box !== null),
+    );
+    if (!union) continue;
+    const width = union.maxX - union.minX;
+    const height = union.maxY - union.minY;
+    // Arms/legs sit around the cubes. A group that is the whole
+    // character (Hundred's cube grid + limbs) must stay untagged.
+    if (width < view.width * 0.72 && height < view.height * 0.6) {
+      markPart(group, "limb");
+    }
+  }
+
+  function isWhiteFill(fill: string): boolean {
+    const value = fill.trim().toLowerCase();
+    return value === "#fff" || value === "#ffffff" || value === "white";
+  }
+
+  for (const group of groups) {
+    if (group.getAttribute("data-part")) continue;
+    const local = [...group.querySelectorAll(SHAPE_SELECTOR)];
+    if (local.length === 0 || local.length > 6) continue;
+    const unmarked = local.filter((el) => !el.getAttribute("data-part"));
+    if (unmarked.length === 0) continue;
+    const fills = unmarked.map((el) => fillOf(el));
+    const hasWhite = fills.some((fill) => isWhiteFill(fill));
+    const hasBlack = fills.some((fill) => isBlackFill(fill));
+    const union = unionBoxes(
+      unmarked
+        .map((el) => shapeBounds(el))
+        .filter((box): box is PathBox => box !== null),
+    );
+    const width = union ? union.maxX - union.minX : 0;
+    const height = union ? union.maxY - union.minY : 0;
+    const small = width < view.width * 0.55 && height < view.height * 0.32;
+    if (small || (hasWhite && hasBlack)) {
+      markPart(group, "face");
+    }
+  }
+
+  for (const el of shapes) {
+    if (el.getAttribute("data-part")) continue;
+    const bounds = shapeBounds(el);
+    if (!isBlackFill(fillOf(el)) || !bounds) continue;
+    const fromTop = bounds.minY - view.y;
+    const height = bounds.maxY - bounds.minY;
+    const width = bounds.maxX - bounds.minX;
+    const overlayBand = Math.max(24, view.height * 0.42);
+    if (
+      fromTop <= overlayBand &&
+      height >= 6 &&
+      width >= 1.2 &&
+      height <= view.height * 0.45 &&
+      width <= view.width * 0.55
+    ) {
+      markPart(el, "numeral");
+    }
+  }
+
+  const bodyBoxes: PathBox[] = [];
+  for (const el of shapes) {
+    const part = el.getAttribute("data-part");
+    if (part === "limb" || part === "face" || part === "numeral") continue;
+    const bounds = shapeBounds(el);
+    if (bounds) bodyBoxes.push(bounds);
+  }
+
+  let body = {
+    x: view.x,
+    y: view.y,
+    width: view.width,
+    height: view.height,
+  };
+  const union = unionBoxes(bodyBoxes);
+  if (union) {
+    const pad = Math.max(
+      0.4,
+      Math.min(union.maxX - union.minX, union.maxY - union.minY) * 0.04,
+    );
+    body = {
+      x: union.minX - pad,
+      y: union.minY - pad,
+      width: union.maxX - union.minX + pad * 2,
+      height: union.maxY - union.minY + pad * 2,
+    };
+  }
+
+  root.setAttribute("overflow", "visible");
+  return {
+    svg: new Serializer().serializeToString(root),
+    width: view.width,
+    height: view.height,
+    viewX: view.x,
+    viewY: view.y,
+    body,
+  };
 }
 
 export type NumberblockAsset = {
@@ -1052,6 +1565,205 @@ function toBigInt(value: number | bigint | string): bigint {
   return BigInt(value);
 }
 
+/** Sprite that holds Times Table characters and the growing multiplication table. */
+export const TIMES_TABLES_TARGET = "assets//Times Tables";
+
+export type TimesTablePose = "legs" | "ray";
+
+/** A rectangle in a costume's own viewBox, before Scratch normalization. */
+export type TimesTableFrame = {
+  target: typeof TIMES_TABLES_TARGET;
+  costume: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+/**
+ * Distance between the standing drawing and the flying drawing
+ * on a paired Times Table costume. The ray is the legs, shifted right.
+ */
+const TIMES_TABLE_POSE_SHIFT = 90;
+
+const GROWING_ROW_PITCH = 75;
+const GROWING_SLOT_WIDTH = 45;
+
+/**
+ * Each row is one multiplier: a red bar, that many colored spots, that many rays.
+ * 1–6 share `table sizes 1x-6x`; 7–12 share `table sizes 7x-12x`.
+ * The widest row fills the costume, and each smaller multiplier is one slot narrower.
+ */
+const GROWING_TIMES_TABLE_SHEETS = [
+  {
+    costume: "table sizes 1x-6x",
+    min: 1,
+    max: 6,
+    sheetWidth: 274.08542,
+    rowHeight: 72.99979,
+  },
+  {
+    costume: "table sizes 7x-12x",
+    min: 7,
+    max: 12,
+    sheetWidth: 544.08547,
+    rowHeight: 72.99984,
+  },
+] as const;
+
+const FLY_ONLY_TIMES_TABLE = "Nineteen Times Table (Fly)";
+
+export type TimesTableCharacterRef = {
+  target: typeof TIMES_TABLES_TARGET;
+  costume: string;
+  pose: TimesTablePose;
+  /**
+   * Where that pose sits on the costume.
+   * Paired sheets are legs on the left and ray on the right.
+   * Nineteen is a single flying drawing.
+   */
+  span: "left" | "right" | "full";
+};
+
+/**
+ * Growing multiplication table for multipliers 1–12.
+ * Returns the viewBox crop of that row, or null outside the range.
+ */
+export function growingTimesTable(multiplier: number): TimesTableFrame | null {
+  if (!Number.isInteger(multiplier)) return null;
+  const sheet = GROWING_TIMES_TABLE_SHEETS.find(
+    (entry) => multiplier >= entry.min && multiplier <= entry.max,
+  );
+  if (!sheet) return null;
+
+  const width =
+    sheet.sheetWidth - (sheet.max - multiplier) * GROWING_SLOT_WIDTH;
+  return {
+    target: TIMES_TABLES_TARGET,
+    costume: sheet.costume,
+    x: (sheet.sheetWidth - width) / 2,
+    y: (multiplier - sheet.min) * GROWING_ROW_PITCH,
+    width,
+    height: sheet.rowHeight,
+  };
+}
+
+/**
+ * Times Table character for a multiplier.
+ *
+ * 1–18 each have one costume: standing legs on the left, flying ray on the right.
+ * 19 is flying only. Costumes named `N Times Table2` put a different character
+ * on the ray side, so they are not used.
+ */
+export function timesTableCharacter(
+  multiplier: number,
+  pose: TimesTablePose,
+): TimesTableCharacterRef | null {
+  if (!Number.isInteger(multiplier)) return null;
+
+  if (multiplier >= 1 && multiplier <= 18) {
+    return {
+      target: TIMES_TABLES_TARGET,
+      costume: `${multiplier} Times Table`,
+      pose,
+      span: pose === "legs" ? "left" : "right",
+    };
+  }
+
+  if (multiplier === 19 && pose === "ray") {
+    return {
+      target: TIMES_TABLES_TARGET,
+      costume: FLY_ONLY_TIMES_TABLE,
+      pose,
+      span: "full",
+    };
+  }
+
+  return null;
+}
+
+function cropSvgViewBox(
+  svg: string,
+  crop: { x: number; y: number; width: number; height: number },
+): string {
+  const viewBox = `${crop.x} ${crop.y} ${crop.width} ${crop.height}`;
+  return svg.replace(/<svg\b[^>]*>/i, (open) => {
+    let next = /viewBox\s*=/i.test(open)
+      ? open.replace(/viewBox\s*=\s*"[^"]*"/i, `viewBox="${viewBox}"`)
+      : open.replace(/>$/, ` viewBox="${viewBox}">`);
+    next = next.replace(/\bwidth="[^"]*"/i, `width="${crop.width}"`);
+    next = next.replace(/\bheight="[^"]*"/i, `height="${crop.height}"`);
+    return next;
+  });
+}
+
+function scratchNamedValues(
+  record: Record<string, unknown> | undefined,
+): ScratchNamedValue[] {
+  if (!record) return [];
+  const values: ScratchNamedValue[] = [];
+  for (const [id, raw] of Object.entries(record)) {
+    if (!Array.isArray(raw) || typeof raw[0] !== "string") continue;
+    values.push({ id, name: raw[0], value: raw[1] });
+  }
+  return values;
+}
+
+function scratchBroadcasts(
+  record: Record<string, unknown> | undefined,
+): ScratchBroadcast[] {
+  if (!record) return [];
+  const broadcasts: ScratchBroadcast[] = [];
+  for (const [id, name] of Object.entries(record)) {
+    if (typeof name === "string") broadcasts.push({ id, name });
+  }
+  return broadcasts;
+}
+
+function copyCostume(costume: ScratchCostume): ScratchCostume {
+  return { ...costume };
+}
+
+function copySound(sound: ScratchSound): ScratchSound {
+  return { ...sound };
+}
+
+function costumeMime(format: string): string {
+  switch (format.toLowerCase()) {
+    case "png":
+      return "image/png";
+    case "jpg":
+    case "jpeg":
+      return "image/jpeg";
+    case "svg":
+      return "image/svg+xml";
+    case "gif":
+      return "image/gif";
+    default:
+      return "application/octet-stream";
+  }
+}
+
+function timesTableFrameFromSpan(
+  ref: TimesTableCharacterRef,
+  box: { x: number; y: number; width: number; height: number },
+): TimesTableFrame {
+  if (ref.span === "full" || box.width <= TIMES_TABLE_POSE_SHIFT) {
+    return { target: ref.target, costume: ref.costume, ...box };
+  }
+
+  const width = box.width - TIMES_TABLE_POSE_SHIFT;
+  const x = ref.span === "right" ? box.x + TIMES_TABLE_POSE_SHIFT : box.x;
+  return {
+    target: ref.target,
+    costume: ref.costume,
+    x,
+    y: box.y,
+    width,
+    height: box.height,
+  };
+}
+
 export class ScratchSb3Assets {
   private readonly sb3Url: string;
 
@@ -1071,6 +1783,8 @@ export class ScratchSb3Assets {
    * Cache by physical asset filename so duplicate assets share one Blob URL.
    */
   private blobUrlCache = new Map<string, string>();
+  private sceneCache = new Map<string, NumberblockScene>();
+  private namedByNumber = new Map<number, { target: string; costume: string }>();
 
   constructor(sb3Url = "/assets/Numberblocks Generator.sb3") {
     this.sb3Url = sb3Url;
@@ -1129,6 +1843,41 @@ export class ScratchSb3Assets {
         if (sound.md5ext && !this.soundsByName.has(sound.name)) {
           this.soundsByName.set(sound.name, sound);
         }
+      }
+    }
+
+    this.indexNamedCostumes();
+  }
+
+  private indexNamedCostumes(): void {
+    this.namedByNumber.clear();
+
+    for (const targetName of CHARACTER_TARGETS) {
+      const costumes = this.costumes.get(targetName);
+      if (!costumes) continue;
+
+      for (const costume of costumes.values()) {
+        if (costume.dataFormat.toLowerCase() !== "svg") continue;
+        const value =
+          targetName === TENS_PACK_TARGET
+            ? tensPackCostumeValue(costume.name)
+            : parseCostumeNumber(costume.name);
+        if (value === null) continue;
+
+        const existing = this.namedByNumber.get(value);
+        if (
+          existing &&
+          (existing.target !== targetName ||
+            costumePreference(existing.costume) <=
+              costumePreference(costume.name))
+        ) {
+          continue;
+        }
+
+        this.namedByNumber.set(value, {
+          target: targetName,
+          costume: costume.name,
+        });
       }
     }
   }
@@ -1400,6 +2149,41 @@ export class ScratchSb3Assets {
   }
 
   /**
+   * Blob URL for any costume, SVG or bitmap.
+   * SVG goes through getSvgUrl(), so `keepNumeral` matches that function.
+   */
+  async getCostumeUrl(
+    targetName: string,
+    costumeName: string,
+    options: { keepNumeral?: boolean } = {},
+  ): Promise<string> {
+    const costume = await this.getCostume(targetName, costumeName);
+    if (costume.dataFormat.toLowerCase() === "svg") {
+      return this.getSvgUrl(targetName, costumeName, options);
+    }
+
+    const cacheKey = `file:${costume.md5ext}`;
+    const cached = this.blobUrlCache.get(cacheKey);
+    if (cached) return cached;
+
+    const file = await this.getZipAsset(costume);
+    const bytes = await file.async("arraybuffer");
+    const url = URL.createObjectURL(
+      new Blob([bytes], { type: costumeMime(costume.dataFormat) }),
+    );
+    this.blobUrlCache.set(cacheKey, url);
+    return url;
+  }
+
+  /** Unprocessed SVG text from the ZIP, before numeral stripping or seams. */
+  async getCostumeSource(
+    targetName: string,
+    costumeName: string,
+  ): Promise<string> {
+    return this.rawCostumeSvg(targetName, costumeName);
+  }
+
+  /**
    * Simple convenience accessor for the canonical 0–99 Numberblocks.
    *
    * Example:
@@ -1416,10 +2200,82 @@ export class ScratchSb3Assets {
   }
 
   /**
+   * Growing multiplication table for multipliers 1–12.
+   * One red bar, that many colored spots, that many rays.
+   */
+  async getGrowingTimesTableUrl(multiplier: number): Promise<string> {
+    const frame = growingTimesTable(multiplier);
+    if (!frame) {
+      throw new Error(
+        `No growing times table for ${multiplier}. Multipliers 1–12 are in the pack.`,
+      );
+    }
+    return this.croppedCostumeUrl(frame);
+  }
+
+  /**
+   * Times Table character. `legs` is standing; `ray` is the flying rocket.
+   * 1–18 have both. 19 is ray only.
+   */
+  async getTimesTableCharacterUrl(
+    multiplier: number,
+    pose: TimesTablePose,
+  ): Promise<string> {
+    const ref = timesTableCharacter(multiplier, pose);
+    if (!ref) {
+      throw new Error(
+        `No ${pose} Times Table for ${multiplier}. Legs cover 1–18; the ray covers 1–19.`,
+      );
+    }
+
+    const raw = await this.rawCostumeSvg(ref.target, ref.costume);
+    const open = raw.match(/<svg\b[^>]*>/i)?.[0] ?? "";
+    const box = parseViewBox(open.match(/viewBox\s*=\s*"([^"]+)"/i)?.[1] ?? null);
+    if (!box) {
+      throw new Error(
+        `Times Table costume "${ref.costume}" has no viewBox to crop.`,
+      );
+    }
+
+    return this.croppedCostumeUrl(timesTableFrameFromSpan(ref, box));
+  }
+
+  private async rawCostumeSvg(
+    targetName: string,
+    costumeName: string,
+  ): Promise<string> {
+    const costume = await this.getCostume(targetName, costumeName);
+    if (costume.dataFormat.toLowerCase() !== "svg") {
+      throw new Error(
+        `"${targetName}" / "${costumeName}" is ${costume.dataFormat}, not SVG.`,
+      );
+    }
+    const file = await this.getZipAsset(costume);
+    return file.async("string");
+  }
+
+  private async croppedCostumeUrl(frame: TimesTableFrame): Promise<string> {
+    const costume = await this.getCostume(frame.target, frame.costume);
+    const cacheKey = `${costume.md5ext}:crop:${frame.x},${frame.y},${frame.width},${frame.height}`;
+    const cached = this.blobUrlCache.get(cacheKey);
+    if (cached) return cached;
+
+    const raw = await this.rawCostumeSvg(frame.target, frame.costume);
+    const svg = normalizeScratchSvg(cropSvgViewBox(raw, frame));
+    const url = URL.createObjectURL(
+      new Blob([svg], { type: "image/svg+xml;charset=utf-8" }),
+    );
+    this.blobUrlCache.set(cacheKey, url);
+    return url;
+  }
+
+  /**
    * UI-facing Numberblock lookup. Hides Scratch target/costume names.
    *
-   * Prefers official named characters when the Scratch project has them,
-   * then the generated 0–99 costumes, then place-group parts.
+   * A single costume is resolved as an official face, then a Figured-Out
+   * Frenzy face, then a named large costume, then a generated 0–99 sprite
+   * (preferring the -fof variant). Composite numbers use
+   * getNumberblockFigure(); table cells use getNumberblockScene().
    */
   async getNumberblockUrl(
     number: number,
@@ -1451,6 +2307,7 @@ export class ScratchSb3Assets {
     number: number,
     options: { keepNumeral?: boolean } = {},
   ): Promise<NumberblockAsset[]> {
+    await this.load();
     const parts = splitOfficialAddends(number);
     if (parts.length === 0) {
       throw new Error(`No Numberblock visual for ${number}.`);
@@ -1458,6 +2315,37 @@ export class ScratchSb3Assets {
     return Promise.all(
       parts.map((part) => this.getNumberblockAsset(part, options)),
     );
+  }
+
+  /**
+   * Official (or generated) SVG with limbs, face and numeral tagged so
+   * a cell can keep cube size and fade life on.
+   */
+  async getNumberblockScene(number: number): Promise<NumberblockScene[]> {
+    const refs = await this.resolveNumberCostumes(number);
+    if (refs.length === 0) {
+      throw new Error(`No Numberblock visual for ${number}.`);
+    }
+    return Promise.all(
+      refs.map((ref) => this.loadSceneCostume(ref.target, ref.costume)),
+    );
+  }
+
+  private async loadSceneCostume(
+    target: string,
+    costumeName: string,
+  ): Promise<NumberblockScene> {
+    const costume = await this.getCostume(target, costumeName);
+    const cacheKey = `${costume.md5ext}:scene`;
+    const cached = this.sceneCache.get(cacheKey);
+    if (cached) return cached;
+
+    const svg = await this.getSvgText(target, costumeName, {
+      keepNumeral: true,
+    });
+    const scene = decorateCostumeLife(svg);
+    this.sceneCache.set(cacheKey, scene);
+    return scene;
   }
 
   private async loadAsset(
@@ -1483,16 +2371,17 @@ export class ScratchSb3Assets {
    * Resolve a single integer to the best Scratch target/costume.
    *
    * Order: official named face → FOF named face → large named costume →
-   * generated `nN-fof` / `nN` for 0–99.
+   * generated `nN-fof` / `nN` for 0–99 → any other named costume the
+   * pack index discovered.
    */
   private async resolveNumberblockCostume(
     number: number,
   ): Promise<{ target: string; costume: string } | null> {
-    const official = await this.resolveNamedCostume(OFFICIAL_TARGET, number);
+    const official = await this.costumeNameOnTarget(OFFICIAL_TARGET, number);
     if (official) return { target: OFFICIAL_TARGET, costume: official };
 
     if (FOF_NAMED_VALUE_SET.has(number)) {
-      const fof = await this.resolveNamedCostume(FOF_TARGET, number);
+      const fof = await this.costumeNameOnTarget(FOF_TARGET, number);
       if (fof) return { target: FOF_TARGET, costume: fof };
     }
 
@@ -1505,34 +2394,94 @@ export class ScratchSb3Assets {
       const fofCostume = `n${number}-fof`;
       if (
         FOF_VALUE_SET.has(number) &&
-        (await this.hasCostume("NBs//Ten + One", fofCostume))
+        (await this.hasCostume(ONES_TARGET, fofCostume))
       ) {
-        return { target: "NBs//Ten + One", costume: fofCostume };
+        return { target: ONES_TARGET, costume: fofCostume };
       }
 
       const plain = `n${number}`;
-      if (await this.hasCostume("NBs//Ten + One", plain)) {
-        return { target: "NBs//Ten + One", costume: plain };
+      if (await this.hasCostume(ONES_TARGET, plain)) {
+        return { target: ONES_TARGET, costume: plain };
+      }
+    }
+
+    const indexed = this.namedByNumber.get(number);
+    if (indexed && (await this.hasCostume(indexed.target, indexed.costume))) {
+      return indexed;
+    }
+
+    return null;
+  }
+
+  private async costumeNameOnTarget(
+    targetName: string,
+    number: number,
+  ): Promise<string | null> {
+    for (const name of costumeNameCandidates(number)) {
+      if (await this.hasCostume(targetName, name)) return name;
+    }
+    return null;
+  }
+
+  private async generatedCostumeName(
+    targetName: string,
+    chunk: number,
+  ): Promise<string> {
+    const figured = `n${chunk}-fof`;
+    if (await this.hasCostume(targetName, figured)) return figured;
+    return `n${chunk}`;
+  }
+
+  /**
+   * Exact named character anywhere in the character packs.
+   * Used by table scenes, which keep one costume when the pack has it
+   * and otherwise fall through to generator place-value sprites.
+   */
+  private async resolveNamedCostume(
+    number: number,
+  ): Promise<{ target: string; costume: string } | null> {
+    await this.load();
+
+    const indexed = this.namedByNumber.get(number);
+    if (indexed) return indexed;
+
+    for (const targetName of CHARACTER_TARGETS) {
+      for (const name of costumeNameCandidates(number)) {
+        if (await this.hasCostume(targetName, name)) {
+          return { target: targetName, costume: name };
+        }
       }
     }
 
     return null;
   }
 
-  private async resolveNamedCostume(
-    targetName: string,
+  /**
+   * Exact named character if the pack has one; otherwise the generator
+   * sprites that make this number (not other characters added together).
+   */
+  private async resolveNumberCostumes(
     number: number,
-  ): Promise<string | null> {
-    const named = officialCostumeName(number);
-    const candidates = [named, String(number), `n${number}`];
+  ): Promise<{ target: string; costume: string }[]> {
+    if (!Number.isInteger(number) || number < 0) return [];
 
-    for (const name of candidates) {
-      if (name && (await this.hasCostume(targetName, name))) {
-        return name;
-      }
+    const named = await this.resolveNamedCostume(number);
+    if (named) return [named];
+
+    if (number <= 99) {
+      return [
+        {
+          target: ONES_TARGET,
+          costume: await this.generatedCostumeName(ONES_TARGET, number),
+        },
+      ];
     }
 
-    return null;
+    const parts = await this.getNumberParts(number);
+    return parts.map((part) => ({
+      target: part.target,
+      costume: part.costume,
+    }));
   }
 
   /**
@@ -1599,7 +2548,7 @@ export class ScratchSb3Assets {
     group: NumberGroupDefinition,
     chunk: number,
   ): Promise<NumberSvgPart> {
-    const costumeName = `n${chunk}`;
+    const costumeName = await this.generatedCostumeName(group.target, chunk);
 
     if (!(await this.hasCostume(group.target, costumeName))) {
       throw new Error(
@@ -1646,6 +2595,115 @@ export class ScratchSb3Assets {
     }
 
     return result;
+  }
+
+  /**
+   * The whole Scratch project as a folder tree.
+   * `Group//Sprite` names become folders. Script blocks stay out of the
+   * tree; `blockCount` is their count. Image bytes stay in the ZIP until
+   * a costume URL is requested.
+   */
+  async resource(): Promise<ScratchResource> {
+    await this.load();
+    const project = this.project;
+    if (!project) {
+      throw new Error("Scratch project was not loaded.");
+    }
+
+    const roots: ScratchResourceNode[] = [];
+
+    const ensureFolder = (
+      nodes: ScratchResourceNode[],
+      name: string,
+    ): ScratchResourceFolder => {
+      const found = nodes.find(
+        (node): node is ScratchResourceFolder =>
+          node.kind === "folder" && node.name === name,
+      );
+      if (found) return found;
+      const folder: ScratchResourceFolder = {
+        kind: "folder",
+        name,
+        children: [],
+      };
+      nodes.push(folder);
+      return folder;
+    };
+
+    let costumeCount = 0;
+    let soundCount = 0;
+
+    for (const target of project.targets) {
+      const parts = target.name.split("//");
+      const label = parts.pop() || target.name;
+      let nodes = roots;
+      for (const part of parts) {
+        if (!part) continue;
+        nodes = ensureFolder(nodes, part).children;
+      }
+
+      const costumes = target.costumes.map(copyCostume);
+      const sounds = (target.sounds ?? []).map(copySound);
+      costumeCount += costumes.length;
+      soundCount += sounds.length;
+
+      nodes.push({
+        kind: "target",
+        name: target.name,
+        label,
+        isStage: target.isStage,
+        currentCostume: target.currentCostume,
+        volume: target.volume,
+        layerOrder: target.layerOrder,
+        tempo: target.tempo,
+        videoTransparency: target.videoTransparency,
+        videoState: target.videoState,
+        textToSpeechLanguage: target.textToSpeechLanguage,
+        visible: target.visible,
+        x: target.x,
+        y: target.y,
+        size: target.size,
+        direction: target.direction,
+        draggable: target.draggable,
+        rotationStyle: target.rotationStyle,
+        blockCount: Object.keys(target.blocks ?? {}).length,
+        commentCount: Object.keys(target.comments ?? {}).length,
+        costumes,
+        sounds,
+        variables: scratchNamedValues(target.variables),
+        lists: scratchNamedValues(target.lists),
+        broadcasts: scratchBroadcasts(target.broadcasts),
+      });
+    }
+
+    const sortNodes = (nodes: ScratchResourceNode[]) => {
+      nodes.sort((a, b) => {
+        const rank = (node: ScratchResourceNode) => {
+          if (node.kind === "target" && node.isStage) return 0;
+          if (node.kind === "folder") return 1;
+          return 2;
+        };
+        const byKind = rank(a) - rank(b);
+        if (byKind !== 0) return byKind;
+        const aName = a.kind === "folder" ? a.name : a.label;
+        const bName = b.kind === "folder" ? b.name : b.label;
+        return aName.localeCompare(bName, undefined, { sensitivity: "base" });
+      });
+      for (const node of nodes) {
+        if (node.kind === "folder") sortNodes(node.children);
+      }
+    };
+    sortNodes(roots);
+
+    return {
+      meta: { ...project.meta },
+      extensions: [...(project.extensions ?? [])],
+      monitors: (project.monitors ?? []).map((monitor) => ({ ...monitor })),
+      targetCount: project.targets.length,
+      costumeCount,
+      soundCount,
+      tree: roots,
+    };
   }
 
   /**

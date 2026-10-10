@@ -197,6 +197,119 @@ const OPERATOR_TEXT: Record<string, OperatorPhrases> = {
   },
 }
 
+export type UiPhraseKey = "chooseStep" | "start" | "orEnter"
+
+type UiPhrases = Record<UiPhraseKey, string>
+
+/** On-screen copy that follows the speech language. */
+const UI_TEXT: Record<string, UiPhrases> = {
+  en: {
+    chooseStep: "Choose a step",
+    start: "Start",
+    orEnter: "or press Enter",
+  },
+  nl: {
+    chooseStep: "Kies een stap",
+    start: "Start",
+    orEnter: "of druk op Enter",
+  },
+  it: {
+    chooseStep: "Scegli un passo",
+    start: "Inizia",
+    orEnter: "oppure premi Invio",
+  },
+  fr: {
+    chooseStep: "Choisis un pas",
+    start: "Commencer",
+    orEnter: "ou appuie sur Entrée",
+  },
+  de: {
+    chooseStep: "Wähle einen Schritt",
+    start: "Start",
+    orEnter: "oder drück Enter",
+  },
+  es: {
+    chooseStep: "Elige un paso",
+    start: "Empezar",
+    orEnter: "o pulsa Intro",
+  },
+  pt: {
+    chooseStep: "Escolhe um passo",
+    start: "Começar",
+    orEnter: "ou prime Enter",
+  },
+  pl: {
+    chooseStep: "Wybierz krok",
+    start: "Start",
+    orEnter: "albo naciśnij Enter",
+  },
+  uk: {
+    chooseStep: "Обери крок",
+    start: "Почати",
+    orEnter: "або натисни Enter",
+  },
+  tr: {
+    chooseStep: "Bir adım seç",
+    start: "Başla",
+    orEnter: "ya da Enter'a bas",
+  },
+  sv: {
+    chooseStep: "Välj ett steg",
+    start: "Starta",
+    orEnter: "eller tryck på Enter",
+  },
+  da: {
+    chooseStep: "Vælg et trin",
+    start: "Start",
+    orEnter: "eller tryk på Enter",
+  },
+  nb: {
+    chooseStep: "Velg et steg",
+    start: "Start",
+    orEnter: "eller trykk Enter",
+  },
+  fi: {
+    chooseStep: "Valitse askel",
+    start: "Aloita",
+    orEnter: "tai paina Enter",
+  },
+  hu: {
+    chooseStep: "Válassz egy lépést",
+    start: "Indítás",
+    orEnter: "vagy nyomd meg az Entert",
+  },
+  cs: {
+    chooseStep: "Vyber krok",
+    start: "Start",
+    orEnter: "nebo stiskni Enter",
+  },
+  el: {
+    chooseStep: "Διάλεξε ένα βήμα",
+    start: "Ξεκίνα",
+    orEnter: "ή πάτα Enter",
+  },
+  ar: {
+    chooseStep: "اختر خطوة",
+    start: "ابدأ",
+    orEnter: "أو اضغط Enter",
+  },
+  zh: {
+    chooseStep: "选一个步长",
+    start: "开始",
+    orEnter: "或按回车",
+  },
+  ja: {
+    chooseStep: "いくつずつ？",
+    start: "スタート",
+    orEnter: "または Enter",
+  },
+  ko: {
+    chooseStep: "몇씩 셀까요?",
+    start: "시작",
+    orEnter: "또는 Enter",
+  },
+}
+
 function readStoredLanguage(): SpeechLanguage {
   try {
     const value = localStorage.getItem(STORAGE_KEY)?.trim()
@@ -326,6 +439,11 @@ function operatorPhrase(
 ): string {
   const phrases = OPERATOR_TEXT[languageBase(language)] ?? OPERATOR_TEXT.en
   return phrases[word]
+}
+
+export function uiPhrase(key: UiPhraseKey): string {
+  const phrases = UI_TEXT[languageBase(speechLanguage.value)] ?? UI_TEXT.en
+  return phrases[key]
 }
 
 /** Prime speech on a user gesture so the first “plus” is not dropped. */

@@ -51,6 +51,11 @@ defineExpose({
     @blur="emit('blur')"
   >
     <span v-if="value !== null && visible" class="numeral">{{ value }}</span>
+    <span
+      v-else-if="active && !readonly"
+      class="caret"
+      aria-hidden="true"
+    />
   </button>
 </template>
 
@@ -133,6 +138,26 @@ defineExpose({
   text-align: center;
 }
 
+.caret {
+  width: 0.08em;
+  min-width: 3px;
+  height: 0.72em;
+  border-radius: 99px;
+  background: #4a5568;
+  animation: blink 1.15s ease-in-out infinite;
+}
+
+@keyframes blink {
+  0%,
+  55% {
+    opacity: 1;
+  }
+  80%,
+  100% {
+    opacity: 0.2;
+  }
+}
+
 @keyframes shake {
   0%,
   100% {
@@ -156,7 +181,8 @@ defineExpose({
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .slot.shake {
+  .slot.shake,
+  .caret {
     animation: none;
   }
 }

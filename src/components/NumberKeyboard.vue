@@ -4,9 +4,10 @@ import { computed } from "vue"
 const props = withDefaults(
   defineProps<{
     canUndo: boolean
-    mode?: "add" | "count" | "times"
+    mode?: "add" | "count" | "times" | "table"
+    pickingStep?: boolean
   }>(),
-  { mode: "add" },
+  { mode: "add", pickingStep: false },
 )
 
 const emit = defineEmits<{
@@ -17,6 +18,14 @@ const emit = defineEmits<{
 type Shortcut = { key: string; action: string }
 
 const shortcuts = computed<Shortcut[]>(() => {
+  if (props.mode === "times" && props.pickingStep) {
+    return [
+      { key: "0–9", action: "step" },
+      { key: "Enter", action: "start" },
+      { key: "⌫", action: "undo" },
+      { key: "Esc", action: "clear" },
+    ]
+  }
   if (props.mode === "times") {
     return [
       { key: "0–9", action: "type product" },
