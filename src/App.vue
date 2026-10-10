@@ -23,6 +23,7 @@ import { TABLE_MAX, type Operation } from "./lib/math"
 type Mode = "add" | "count" | "times" | "table"
 
 const mode = ref<Mode>("add")
+const proportional = ref(false)
 const tableMax = ref(TABLE_MAX)
 const tableMaxText = ref(String(TABLE_MAX))
 
@@ -240,43 +241,63 @@ onUnmounted(() => {
 <template>
   <div class="room" :class="{ table: mode === 'table' }">
     <header class="topbar">
-      <div class="modes" role="tablist" aria-label="Mode">
-        <button
-          type="button"
-          role="tab"
-          :aria-selected="mode === 'add'"
-          :class="{ on: mode === 'add' }"
-          @click="setMode('add')"
-        >
-          Add
-        </button>
-        <button
-          type="button"
-          role="tab"
-          :aria-selected="mode === 'count'"
-          :class="{ on: mode === 'count' }"
-          @click="setMode('count')"
-        >
-          Count
-        </button>
-        <button
-          type="button"
-          role="tab"
-          :aria-selected="mode === 'times'"
-          :class="{ on: mode === 'times' }"
-          @click="setMode('times')"
-        >
-          Times
-        </button>
-        <button
-          type="button"
-          role="tab"
-          :aria-selected="mode === 'table'"
-          :class="{ on: mode === 'table' }"
-          @click="setMode('table')"
-        >
-          Table
-        </button>
+      <div class="center-nav">
+        <div class="modes" role="tablist" aria-label="Mode">
+          <button
+            type="button"
+            role="tab"
+            :aria-selected="mode === 'add'"
+            :class="{ on: mode === 'add' }"
+            @click="setMode('add')"
+          >
+            Add
+          </button>
+          <button
+            type="button"
+            role="tab"
+            :aria-selected="mode === 'count'"
+            :class="{ on: mode === 'count' }"
+            @click="setMode('count')"
+          >
+            Count
+          </button>
+          <button
+            type="button"
+            role="tab"
+            :aria-selected="mode === 'times'"
+            :class="{ on: mode === 'times' }"
+            @click="setMode('times')"
+          >
+            Times
+          </button>
+          <button
+            type="button"
+            role="tab"
+            :aria-selected="mode === 'table'"
+            :class="{ on: mode === 'table' }"
+            @click="setMode('table')"
+          >
+            Table
+          </button>
+        </div>
+        <div class="scale" role="group" aria-label="Figure scale">
+          <button
+            type="button"
+            :aria-pressed="!proportional"
+            :class="{ on: !proportional }"
+            @click="proportional = false"
+          >
+            Fit
+          </button>
+          <button
+            type="button"
+            :aria-pressed="proportional"
+            :class="{ on: proportional }"
+            @click="proportional = true"
+          >
+            Proportional
+          </button>
+        </div>
       </div>
       <label v-if="mode === 'table'" class="table-max">
         <span>Up to</span>
@@ -338,6 +359,7 @@ onUnmounted(() => {
         :operators="addOperators"
         :active-field="addActiveField"
         :correct="addCorrect"
+        :proportional="proportional"
         @focus="addFocus"
       />
       <CountSequence
@@ -347,6 +369,7 @@ onUnmounted(() => {
         :active-index="countActiveIndex"
         :complete="countComplete"
         :just-locked-index="justLockedIndex"
+        :proportional="proportional"
       />
       <TimesCount
         v-else-if="mode === 'times'"
@@ -358,12 +381,13 @@ onUnmounted(() => {
         :just-locked-index="timesJustLockedIndex"
         :active-field="timesActiveField"
         :release-answer="timesClearDraft"
+        :proportional="proportional"
         @focus-step="timesFocusStep"
         @focus-product="timesFocusProduct"
         @commit-step="timesCommitStep"
         @clear-draft="timesClearDraft"
       />
-      <TimesTable v-else :max="tableMax" />
+      <TimesTable v-else :max="tableMax" :proportional="proportional" />
     </div>
 
     <footer v-if="mode !== 'table'" class="band bottom">
@@ -426,11 +450,19 @@ onUnmounted(() => {
   padding: 0.65rem 1rem 0;
 }
 
+.center-nav,
 .modes,
+.scale,
 .langs {
   display: flex;
   align-items: center;
   gap: 0.35rem;
+}
+
+.center-nav {
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.55rem 0.85rem;
 }
 
 .langs,
@@ -470,6 +502,7 @@ onUnmounted(() => {
 }
 
 .modes button,
+.scale button,
 .langs button,
 .lang-other {
   appearance: none;
@@ -486,6 +519,7 @@ onUnmounted(() => {
   text-decoration: none;
 }
 
+.scale button,
 .langs button,
 .lang-other {
   padding: 0.28rem 0.7rem;
@@ -515,6 +549,7 @@ onUnmounted(() => {
 }
 
 .modes button.on,
+.scale button.on,
 .langs button.on,
 .lang-other.on {
   background: rgba(255, 255, 255, 0.78);
@@ -536,6 +571,7 @@ onUnmounted(() => {
 
 @media (max-width: 640px) {
   .topbar {
+    flex-wrap: wrap;
     justify-content: space-between;
     gap: 0.4rem;
   }

@@ -958,7 +958,12 @@ export const BLOCK_SEAM_THICKNESS = 0.02;
  * Scratch cube paths already have `stroke="#000000"`, but the painting
  * layer sets `stroke-width="0"`, so 2×2 Four (and the rest) reads as one
  * solid slab. Restore a groove on every unit square so the blocks can be
- * counted.
+ * counted. Stroke width is always `unit * BLOCK_SEAM_THICKNESS`.
+ *
+ * Large-number hundreds also draw hollow unit outlines (`fill="none"` with a
+ * thin author stroke). Those are fewer than Hundred’s 10×10 grid, so we only
+ * rewrite their width to the same rule — we do not invent new hollow seams
+ * (that would catch brow/glass frames).
  */
 export function separateBlockSeams(svg: string): string {
   const pathRe = /<path\b([^>]*)>/gi;
@@ -994,9 +999,34 @@ export function separateBlockSeams(svg: string): string {
   const hollowAtUnit = atUnit.filter(
     (cube) => cube.fill === "none" || cube.fill === undefined,
   ).length;
+  // Official Hundred: many hollow unit squares need seams invented.
   const allowHollow = hollowAtUnit >= 9;
 
+  // Large-number hundreds draw hollow outlines over solid cubes. Match those
+  // outlines to the groove color of the solid unit cubes (e.g. Three Hundred’s
+  // mustard #969623 overlays → same #4d4d4d as the yellow fills).
+  const solidFills = atUnit
+    .map((cube) => cube.fill)
+    .filter((fill): fill is string => Boolean(fill) && fill !== "none");
+  let overlaySeam: string | null = null;
+  if (solidFills.length > 0) {
+    const fillHist = new Map<string, number>();
+    for (const fill of solidFills) {
+      fillHist.set(fill, (fillHist.get(fill) ?? 0) + 1);
+    }
+    let modalFill = solidFills[0]!;
+    let fillVotes = 0;
+    for (const [fill, count] of fillHist) {
+      if (count > fillVotes) {
+        modalFill = fill;
+        fillVotes = count;
+      }
+    }
+    overlaySeam = seamColorForFill(modalFill);
+  }
+
   const strokeWidth = unit * BLOCK_SEAM_THICKNESS;
+  const strokeWidthAttr = `stroke-width="${strokeWidth.toFixed(3)}"`;
 
   return svg.replace(pathRe, (full, attrs: string) => {
     const cube = cubeFromAttrs(attrs);
@@ -1008,24 +1038,50 @@ export function separateBlockSeams(svg: string): string {
       return full;
     }
 
-    if ((cube.fill === "none" || cube.fill === undefined) && !allowHollow) {
-      return full;
+    const hollow = cube.fill === "none" || cube.fill === undefined;
+    const authorStrokeWidth = attrs.match(/\bstroke-width\s*=\s*"([^"]*)"/i)?.[1];
+    const authorStroke = attrs.match(/\bstroke\s*=\s*"([^"]*)"/i)?.[1];
+    const parsedAuthorWidth =
+      authorStrokeWidth !== undefined
+        ? Number.parseFloat(authorStrokeWidth)
+        : undefined;
+    const hasVisibleAuthorStroke =
+      (parsedAuthorWidth !== undefined && parsedAuthorWidth > 0) ||
+      (authorStroke !== undefined &&
+        authorStroke.toLowerCase() !== "none" &&
+        parsedAuthorWidth !== 0);
+
+    if (hollow && !allowHollow) {
+      // Stroked hollow unit overlays (Two/Three/Five Hundred, …).
+      if (!hasVisibleAuthorStroke) return full;
+      const seam =
+        overlaySeam ??
+        (authorStroke ? seamColorForFill(authorStroke) : "#5a1e22");
+      let next = attrs;
+      if (/\bstroke-width\s*=/.test(next)) {
+        next = next.replace(/\bstroke-width\s*=\s*"[^"]*"/i, strokeWidthAttr);
+      } else {
+        next += ` ${strokeWidthAttr}`;
+      }
+      if (/\bstroke\s*=/.test(next)) {
+        next = next.replace(/\bstroke\s*=\s*"[^"]*"/i, `stroke="${seam}"`);
+      } else {
+        next += ` stroke="${seam}"`;
+      }
+      return `<path${next}>`;
     }
 
     const seam = seamColorForFill(cube.fill);
     let next = attrs;
     if (/\bstroke-width\s*=/.test(next)) {
-      next = next.replace(
-        /\bstroke-width\s*=\s*"[^"]*"/i,
-        `stroke-width="${strokeWidth.toFixed(3)}"`,
-      );
+      next = next.replace(/\bstroke-width\s*=\s*"[^"]*"/i, strokeWidthAttr);
     } else if (/\bstroke\s*=/.test(next)) {
       next = next.replace(
         /\bstroke\s*=\s*"[^"]*"/i,
-        (stroke) => `${stroke} stroke-width="${strokeWidth.toFixed(3)}"`,
+        (stroke) => `${stroke} ${strokeWidthAttr}`,
       );
     } else {
-      next += ` stroke-width="${strokeWidth.toFixed(3)}"`;
+      next += ` ${strokeWidthAttr}`;
     }
 
     if (/\bstroke\s*=/.test(next)) {
@@ -1353,13 +1409,104 @@ function isUrlFill(fill: string): boolean {
   return /^url\(/i.test(fill);
 }
 
-function markPart(el: Element, part: "limb" | "face" | "numeral"): void {
-  el.setAttribute("data-part", part);
-  if (el.tagName.toLowerCase() === "g") {
-    for (const child of el.querySelectorAll(SHAPE_SELECTOR)) {
-      if (!child.getAttribute("data-part")) child.setAttribute("data-part", part);
+function markShape(el: Element, part: "limb" | "face" | "numeral"): void {
+  if (!el.getAttribute("data-part")) el.setAttribute("data-part", part);
+}
+
+/** Fill on this element, or the nearest ancestor that sets one. */
+function resolvedFill(el: Element): string {
+  let current: Element | null = el;
+  while (current) {
+    const fill = (current.getAttribute("fill") ?? "").trim();
+    if (fill) return fill;
+    current = current.parentElement;
+  }
+  return "";
+}
+
+function median(values: number[]): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  if (sorted.length % 2 === 1) return sorted[mid] ?? 0;
+  return ((sorted[mid - 1] ?? 0) + (sorted[mid] ?? 0)) / 2;
+}
+
+/**
+ * Cube edge length. A repeated grid wins over one big outline, and
+ * tiny details (pips, pupils) lose on painted area.
+ */
+function dominantBlockUnit(shapes: Element[]): number | null {
+  const clusters = new Map<number, number[]>();
+  for (const el of shapes) {
+    if (isUrlFill(resolvedFill(el))) continue;
+    const bounds = shapeBounds(el);
+    if (!bounds) continue;
+    const width = bounds.maxX - bounds.minX;
+    const height = bounds.maxY - bounds.minY;
+    const minSide = Math.min(width, height);
+    const maxSide = Math.max(width, height);
+    if (minSide < 1 || maxSide / minSide > 1.08) continue;
+    if (isBlackFill(resolvedFill(el))) continue;
+    const side = (width + height) / 2;
+    const bin = Math.round(side * 2) / 2;
+    const sizes = clusters.get(bin) ?? [];
+    sizes.push(side);
+    clusters.set(bin, sizes);
+  }
+
+  const ranked = [...clusters.values()].map((sizes) => ({
+    count: sizes.length,
+    area: sizes.reduce((sum, side) => sum + side * side, 0),
+    unit: median(sizes),
+  }));
+  const repeated = ranked.filter((entry) => entry.count >= 2);
+  const pool = repeated.length > 0 ? repeated : ranked;
+  let best: { count: number; area: number; unit: number } | null = null;
+  for (const entry of pool) {
+    if (!best || entry.area > best.area) best = entry;
+  }
+  return best && best.unit >= 1 ? best.unit : null;
+}
+
+function matchesBlockLength(length: number, unit: number, steps: number): boolean {
+  // Tight: real cubes sit on the grid. Eyes and gloves are a little off.
+  return Math.abs(length - steps * unit) <= unit * 0.035;
+}
+
+function isHollowFill(fill: string): boolean {
+  return !fill || fill === "none";
+}
+
+/** One cube, or a straight row/column of cubes, including a side face. */
+function isBlockShape(bounds: PathBox, unit: number): boolean {
+  const width = bounds.maxX - bounds.minX;
+  const height = bounds.maxY - bounds.minY;
+  const across = (length: number) => {
+    const steps = Math.round(length / unit);
+    return steps >= 1 && matchesBlockLength(length, unit, steps);
+  };
+  const edge = (length: number) => matchesBlockLength(length, unit, 1);
+  return (edge(width) && across(height)) || (edge(height) && across(width));
+}
+
+/** Hundred paints a 10×10 of hollow unit squares over a parent fill. */
+function allowHollowUnitBlocks(shapes: Element[], unit: number): boolean {
+  let count = 0;
+  for (const el of shapes) {
+    if (!isHollowFill(resolvedFill(el))) continue;
+    const bounds = shapeBounds(el);
+    if (!bounds) continue;
+    const width = bounds.maxX - bounds.minX;
+    const height = bounds.maxY - bounds.minY;
+    if (
+      matchesBlockLength(width, unit, 1) &&
+      matchesBlockLength(height, unit, 1)
+    ) {
+      count += 1;
+      if (count >= 9) return true;
     }
   }
+  return false;
 }
 
 function shapeBounds(el: Element): PathBox | null {
@@ -1393,6 +1540,10 @@ export type NumberblockScene = {
   viewX: number;
   viewY: number;
   body: { x: number; y: number; width: number; height: number };
+  /** Detected cube edge in SVG units; null when the costume has no grid. */
+  unit: number | null;
+  /** Near-square block shapes tagged as the cube body (meta or ones). */
+  squareCount: number;
 };
 
 function sceneFromSvg(svg: string): NumberblockScene {
@@ -1410,58 +1561,99 @@ function sceneFromSvg(svg: string): NumberblockScene {
     viewX: view.x,
     viewY: view.y,
     body: { x: view.x, y: view.y, width: view.width, height: view.height },
+    unit: null,
+    squareCount: 0,
   };
 }
 
+function sceneMetaUnit(scene: NumberblockScene): number {
+  return scene.unit && scene.unit > 0
+    ? scene.unit
+    : Math.max(
+        1,
+        Math.min(scene.body.width, scene.body.height) /
+          Math.max(1, Math.round(Math.sqrt(Math.max(scene.body.width, 1)))),
+      );
+}
+
 /**
- * Tag official costume paths so a table cell can keep cube size and
- * fade eyes and limbs on, instead of swapping to a different drawing.
+ * Ones-per-meta edge (10 for a hundred-block, else 1).
+ * When the layout box is expanded to ones, SVG strokes must be divided by
+ * this or meta costumes look ~10× heavier than Ten/Three beside them.
  */
-export function decorateCostumeLife(svg: string): NumberblockScene {
-  const Parser = globalThis.DOMParser;
-  const Serializer = globalThis.XMLSerializer;
-  if (typeof Parser === "undefined" || typeof Serializer === "undefined") {
-    return sceneFromSvg(svg);
+export function sceneMetaOnesEdge(
+  scene: NumberblockScene,
+  partValue?: number,
+): number {
+  if (partValue === undefined || !(partValue > 0)) return 1;
+  const unit = sceneMetaUnit(scene);
+  const wide = scene.body.width / unit;
+  const tall = scene.body.height / unit;
+  const metaArea = Math.max(wide * tall, 0.01);
+  const valuePerMeta = partValue / metaArea;
+  const edge = Math.round(Math.sqrt(valuePerMeta));
+  if (
+    edge >= 2 &&
+    Math.abs(edge * edge - valuePerMeta) <= Math.max(2, valuePerMeta * 0.2)
+  ) {
+    return edge;
   }
+  return 1;
+}
 
-  const doc = new Parser().parseFromString(svg, "image/svg+xml");
-  const root = doc.documentElement;
-  if (root.querySelector("parsererror")) return sceneFromSvg(svg);
+/**
+ * Shrink stroke widths when a meta costume is displayed at ones footprint
+ * so grooves match `BLOCK_SEAM_THICKNESS` ones cubes on screen.
+ */
+export function scaleSvgStrokesForOnesEdge(svg: string, edge: number): string {
+  if (!(edge > 1.01)) return svg;
+  return svg.replace(
+    /\bstroke-width\s*=\s*"([^"]*)"/gi,
+    (full, raw: string) => {
+      const width = Number.parseFloat(raw);
+      if (!(width > 0)) return full;
+      return `stroke-width="${(width / edge).toFixed(4)}"`;
+    },
+  );
+}
 
-  const view =
-    parseViewBox(root.getAttribute("viewBox")) ?? sceneFromSvg(svg).body;
-  const shapes = [...root.querySelectorAll(SHAPE_SELECTOR)];
-
-  for (const el of shapes) {
-    if (isUrlFill(fillOf(el))) markPart(el, "limb");
+/**
+ * Body size in **one-cube** units from a decorated scene.
+ *
+ * Large-number costumes (e.g. Five Hundred) often draw meta-blocks: each
+ * detected square is a hundred, so raw body/unit ≈ 1×5 for 500. When the
+ * part value is known and each meta-cell holds a square pack of ones
+ * (100 → 10×10, 1000 →  ~31.6², …), expand to ones so Proportional scale
+ * matches Fifty’s ones beside Five Hundred.
+ */
+export function sceneCubeUnits(
+  scene: NumberblockScene,
+  partValue?: number,
+): {
+  wide: number;
+  tall: number;
+} {
+  const unit = sceneMetaUnit(scene);
+  const wide = scene.body.width / unit;
+  const tall = scene.body.height / unit;
+  const edge = sceneMetaOnesEdge(scene, partValue);
+  if (edge > 1) {
+    return { wide: wide * edge, tall: tall * edge };
   }
+  return { wide, tall };
+}
 
-  const groups = [...root.querySelectorAll("g")].reverse();
+function isWhiteFill(fill: string): boolean {
+  const value = fill.trim().toLowerCase();
+  return value === "#fff" || value === "#ffffff" || value === "white";
+}
+
+/** Costumes with no cube grid (Zero) still hide an obvious drawn face. */
+function tagLooseFace(
+  groups: Element[],
+  view: { width: number; height: number },
+): void {
   for (const group of groups) {
-    const local = [...group.querySelectorAll(SHAPE_SELECTOR)];
-    if (!local.some((el) => isUrlFill(fillOf(el)))) continue;
-    const union = unionBoxes(
-      local
-        .map((el) => shapeBounds(el))
-        .filter((box): box is PathBox => box !== null),
-    );
-    if (!union) continue;
-    const width = union.maxX - union.minX;
-    const height = union.maxY - union.minY;
-    // Arms/legs sit around the cubes. A group that is the whole
-    // character (Hundred's cube grid + limbs) must stay untagged.
-    if (width < view.width * 0.72 && height < view.height * 0.6) {
-      markPart(group, "limb");
-    }
-  }
-
-  function isWhiteFill(fill: string): boolean {
-    const value = fill.trim().toLowerCase();
-    return value === "#fff" || value === "#ffffff" || value === "white";
-  }
-
-  for (const group of groups) {
-    if (group.getAttribute("data-part")) continue;
     const local = [...group.querySelectorAll(SHAPE_SELECTOR)];
     if (local.length === 0 || local.length > 6) continue;
     const unmarked = local.filter((el) => !el.getAttribute("data-part"));
@@ -1478,10 +1670,15 @@ export function decorateCostumeLife(svg: string): NumberblockScene {
     const height = union ? union.maxY - union.minY : 0;
     const small = width < view.width * 0.55 && height < view.height * 0.32;
     if (small || (hasWhite && hasBlack)) {
-      markPart(group, "face");
+      for (const el of unmarked) markShape(el, "face");
     }
   }
+}
 
+function tagOverlayNumerals(
+  shapes: Element[],
+  view: { x: number; y: number; width: number; height: number },
+): void {
   for (const el of shapes) {
     if (el.getAttribute("data-part")) continue;
     const bounds = shapeBounds(el);
@@ -1497,8 +1694,103 @@ export function decorateCostumeLife(svg: string): NumberblockScene {
       height <= view.height * 0.45 &&
       width <= view.width * 0.55
     ) {
-      markPart(el, "numeral");
+      markShape(el, "numeral");
     }
+  }
+}
+
+/**
+ * Tag costume paths so a table cell shows only the block shape.
+ * Eyes, pupils, glasses, brows, hair, crowns and limbs are marked so the
+ * cell can hide them. The cubes stay put, so the cell does not change size.
+ */
+export function decorateCostumeLife(svg: string): NumberblockScene {
+  const Parser = globalThis.DOMParser;
+  const Serializer = globalThis.XMLSerializer;
+  if (typeof Parser === "undefined" || typeof Serializer === "undefined") {
+    return sceneFromSvg(svg);
+  }
+
+  const doc = new Parser().parseFromString(svg, "image/svg+xml");
+  const root = doc.documentElement;
+  if (root.querySelector("parsererror")) return sceneFromSvg(svg);
+
+  const view =
+    parseViewBox(root.getAttribute("viewBox")) ?? sceneFromSvg(svg).body;
+  const shapes = [...root.querySelectorAll(SHAPE_SELECTOR)];
+  const unit = dominantBlockUnit(shapes);
+  const blocks = new Set<Element>();
+  if (unit) {
+    const hollowOk = allowHollowUnitBlocks(shapes, unit);
+    for (const el of shapes) {
+      const fill = resolvedFill(el);
+      if (isUrlFill(fill) || isBlackFill(fill)) continue;
+      const bounds = shapeBounds(el);
+      if (!bounds || !isBlockShape(bounds, unit)) continue;
+      // Stroked brow/glass frames are often 1×2 hollow rects on the grid.
+      // Only Hundred's hollow unit squares count as blocks.
+      if (isHollowFill(fill)) {
+        const width = bounds.maxX - bounds.minX;
+        const height = bounds.maxY - bounds.minY;
+        if (
+          !hollowOk ||
+          !matchesBlockLength(width, unit, 1) ||
+          !matchesBlockLength(height, unit, 1)
+        ) {
+          continue;
+        }
+      }
+      blocks.add(el);
+    }
+  }
+
+  for (const el of shapes) {
+    if (blocks.has(el)) continue;
+    if (isUrlFill(resolvedFill(el))) markShape(el, "limb");
+  }
+
+  const groups = [...root.querySelectorAll("g")].reverse();
+  for (const group of groups) {
+    const local = [...group.querySelectorAll(SHAPE_SELECTOR)];
+    if (!local.some((el) => isUrlFill(resolvedFill(el)))) continue;
+    const union = unionBoxes(
+      local
+        .map((el) => shapeBounds(el))
+        .filter((box): box is PathBox => box !== null),
+    );
+    if (!union) continue;
+    const width = union.maxX - union.minX;
+    const height = union.maxY - union.minY;
+    // Arms and legs sit around the cubes. A group that is the whole
+    // character (Hundred's grid plus limbs) must not swallow the blocks.
+    if (width < view.width * 0.72 && height < view.height * 0.6) {
+      for (const el of local) {
+        if (!blocks.has(el)) markShape(el, "limb");
+      }
+    }
+  }
+
+  if (unit && blocks.size > 0) {
+    const blockTops = [...blocks]
+      .map((el) => shapeBounds(el))
+      .filter((box): box is PathBox => box !== null);
+    const blockTop = Math.min(...blockTops.map((box) => box.minY));
+    for (const el of shapes) {
+      if (blocks.has(el) || el.getAttribute("data-part")) continue;
+      if (!isBlackFill(resolvedFill(el))) continue;
+      const bounds = shapeBounds(el);
+      // Digits float above the stack. Pupils and mouths sit on the cubes.
+      if (bounds && bounds.maxY <= blockTop + unit * 0.35) {
+        markShape(el, "numeral");
+      }
+    }
+    for (const el of shapes) {
+      if (blocks.has(el) || el.getAttribute("data-part")) continue;
+      markShape(el, "face");
+    }
+  } else {
+    tagLooseFace(groups, view);
+    tagOverlayNumerals(shapes, view);
   }
 
   const bodyBoxes: PathBox[] = [];
@@ -1537,6 +1829,8 @@ export function decorateCostumeLife(svg: string): NumberblockScene {
     viewX: view.x,
     viewY: view.y,
     body,
+    unit,
+    squareCount: blocks.size,
   };
 }
 
@@ -2320,14 +2614,25 @@ export class ScratchSb3Assets {
   /**
    * Official (or generated) SVG with limbs, face and numeral tagged so
    * a cell can keep cube size and fade life on.
+   *
+   * Uses the same character split as getNumberblockFigure() (e.g. 141 →
+   * One Hundred + Forty-One), not place-value generator sprites — those
+   * miniatures break shared cube scale in Proportional view.
    */
   async getNumberblockScene(number: number): Promise<NumberblockScene[]> {
-    const refs = await this.resolveNumberCostumes(number);
-    if (refs.length === 0) {
+    await this.load();
+    const parts = splitOfficialAddends(number);
+    if (parts.length === 0) {
       throw new Error(`No Numberblock visual for ${number}.`);
     }
     return Promise.all(
-      refs.map((ref) => this.loadSceneCostume(ref.target, ref.costume)),
+      parts.map(async (part) => {
+        const resolved = await this.resolveNumberblockCostume(part);
+        if (!resolved) {
+          throw new Error(`No Numberblock costume for part ${part} of ${number}.`);
+        }
+        return this.loadSceneCostume(resolved.target, resolved.costume);
+      }),
     );
   }
 

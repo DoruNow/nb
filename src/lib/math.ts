@@ -64,7 +64,7 @@ export function isCorrect(
 
 export const COUNT_LENGTH = 10
 /** Highest factor on each Table axis (1 through this number). */
-export const TABLE_MAX = 10
+export const TABLE_MAX = 50
 
 export function multiple(step: number, k: number): number {
   return step * k

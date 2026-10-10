@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue"
 import type { CountColumn } from "../model/count"
-import { blockScale } from "../lib/numberblockScale"
+import {
+  blockScale,
+  pxPerUnitShared,
+} from "../lib/numberblockScale"
 import { splitOfficialAddends } from "../lib/numberblocksSb3"
 import { numberblocksAssets } from "../lib/numberblocksSb3"
 import { speakNumberName } from "../lib/speak"
@@ -18,6 +21,7 @@ const props = defineProps<{
   activeIndex: number
   complete: boolean
   justLockedIndex: number | null
+  proportional?: boolean
 }>()
 
 const root = ref<HTMLElement | null>(null)
@@ -60,13 +64,28 @@ function partsFor(value: number | null) {
   return value === null ? [] : splitOfficialAddends(value)
 }
 
-const pxPerUnit = computed(() =>
-  blockScale({
+const pxPerUnit = computed(() => {
+  if (props.proportional) {
+    return pxPerUnitShared({
+      figures: props.columns.flatMap((column) => {
+        if (column.value === null) return []
+        return [
+          {
+            value: column.value,
+            parts: partsFor(column.value),
+            cellWidth: columnWidth.value,
+            cellHeight: availableHeight.value,
+          },
+        ]
+      }),
+    })
+  }
+  return blockScale({
     figures: props.columns.map((column) => partsFor(column.value)),
     columnWidth: columnWidth.value,
     availableHeight: availableHeight.value,
-  }),
-)
+  })
+})
 
 function slotLabel(index: number): string {
   return `Number ${index + 1}`

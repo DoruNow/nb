@@ -1,11 +1,28 @@
 <script setup lang="ts">
-import { computed, nextTick, onUnmounted, ref, watch } from "vue"
+import {
+  computed,
+  nextTick,
+  onMounted,
+  onUnmounted,
+  ref,
+  watch,
+} from "vue"
 import type { Column, ColumnId } from "../model/equation"
 import type { Operation } from "../lib/math"
-import { numberblocksAssets } from "../lib/numberblocksSb3"
+import { logSharedPxChoice } from "../lib/cubeScaleDebug"
+import {
+  fitPxPerUnitBoxes,
+  scaleFromLargestCostume,
+} from "../lib/numberblockScale"
+import {
+  numberblocksAssets,
+  sceneCubeUnits,
+  splitOfficialAddends,
+} from "../lib/numberblocksSb3"
 import { cancelSpeech, speakNumberName, speakOperator } from "../lib/speak"
 import MathInput from "./MathInput.vue"
 import NumberblockView from "./NumberblockView.vue"
+import ProductFigure from "./ProductFigure.vue"
 
 const MERGE_MS = 780
 
@@ -23,6 +40,7 @@ const props = defineProps<{
   operators: Operation[]
   activeField: ColumnId
   correct: boolean | null
+  proportional?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -38,7 +56,11 @@ const speakingId = ref<ColumnId | null>(null)
 const speakingOp = ref<number | null>(null)
 const cloneBoxes = ref<CloneBox[]>([])
 const cloneValues = ref<(number | null)[]>([])
+const sharedPx = ref(1)
+const cellSize = ref({ width: 0, height: 0 })
 let celebrateGen = 0
+let resize: ResizeObserver | undefined
+let scaleRequest = 0
 
 const figureEls = new Map<string, HTMLElement>()
 
@@ -48,6 +70,101 @@ let popTimer: ReturnType<typeof setTimeout> | undefined
 function setFigureRef(id: string, el: unknown) {
   if (el instanceof HTMLElement) figureEls.set(id, el)
   else figureEls.delete(id)
+}
+
+async function measureScale() {
+  if (!props.proportional) {
+    sharedPx.value = 1
+    return
+  }
+  const id = ++scaleRequest
+  const visible = props.columns.filter((column) => {
+    if (column.value === null) return false
+    if (column.kind === "answer" && !showAnswer.value) return false
+    return true
+  })
+  if (visible.length === 0) return
+
+  const costumes: Array<{
+    part: number
+    figureValue?: number
+    units: ReturnType<typeof sceneCubeUnits>
+    cellWidth: number
+    cellHeight: number
+    soloPx: number
+    squaresFound: number
+  }> = []
+
+  for (const column of visible) {
+    const value = column.value
+    if (value === null) continue
+    const el = figureEls.get(column.id)
+    const cellWidth = Math.max(0, (el?.clientWidth ?? 0) - 8)
+    const cellHeight = Math.max(0, (el?.clientHeight ?? 0) - 8)
+    if (cellWidth <= 0 || cellHeight <= 0) continue
+    // Keep a representative cell for ProductFigure packing.
+    cellSize.value = { width: cellWidth, height: cellHeight }
+    try {
+      const scenes = await numberblocksAssets.getNumberblockScene(value)
+      if (id !== scaleRequest) return
+      const parts = splitOfficialAddends(value)
+      for (let index = 0; index < scenes.length; index += 1) {
+        const scene = scenes[index]!
+        const part = parts[index] ?? value
+        const units = sceneCubeUnits(scene, part)
+        const soloPx = fitPxPerUnitBoxes([units], cellWidth, cellHeight)
+        costumes.push({
+          part,
+          figureValue: value,
+          units,
+          cellWidth,
+          cellHeight,
+          soloPx,
+          squaresFound: scene.squareCount,
+        })
+      }
+    } catch {
+      // skip unloadable values
+    }
+  }
+  if (id !== scaleRequest || costumes.length === 0) return
+
+  const scale = scaleFromLargestCostume({
+    costumes: costumes.map((costume) => ({
+      part: costume.part,
+      units: costume.units,
+      cellWidth: costume.cellWidth,
+      cellHeight: costume.cellHeight,
+    })),
+  })
+  if (scale.pxPerUnit > 0) {
+    sharedPx.value = scale.pxPerUnit
+    cellSize.value = {
+      width: scale.cellWidth,
+      height: scale.cellHeight,
+    }
+    logSharedPxChoice({
+      where: "MathEquation",
+      costumes,
+      chosenPart: scale.largestPart,
+      chosenPx: scale.pxPerUnit,
+      refCellWidth: scale.cellWidth,
+      refCellHeight: scale.cellHeight,
+      limitingPart: scale.limitingPart,
+    })
+  }
+}
+
+function observeScale() {
+  resize?.disconnect()
+  resize = undefined
+  if (!props.proportional) return
+  resize = new ResizeObserver(() => {
+    void measureScale()
+  })
+  if (root.value) resize.observe(root.value)
+  for (const el of figureEls.values()) resize.observe(el)
+  void measureScale()
 }
 
 const termColumns = computed(() =>
@@ -271,11 +388,30 @@ watch(
   },
 )
 
+watch(
+  () =>
+    [
+      props.proportional,
+      props.columns.map((column) => column.value).join(","),
+      revealed.value,
+    ] as const,
+  async () => {
+    await nextTick()
+    observeScale()
+  },
+)
+
+onMounted(async () => {
+  await nextTick()
+  observeScale()
+})
+
 onUnmounted(() => {
   celebrateGen += 1
   cancelSpeech()
   numberblocksAssets.stopAllSounds()
   clearTimers()
+  resize?.disconnect()
 })
 </script>
 
@@ -310,7 +446,16 @@ onUnmounted(() => {
           class="figure"
           :class="{ waiting: column.kind === 'answer' && !showAnswer }"
         >
+          <ProductFigure
+            v-if="proportional && column.value !== null"
+            :value="column.value"
+            :px-per-unit="sharedPx"
+            :cell-width="cellSize.width"
+            :cell-height="cellSize.height"
+            awake
+          />
           <NumberblockView
+            v-else
             fill
             :value="column.value"
             :jumping="column.kind === 'answer' && popping"
@@ -328,7 +473,15 @@ onUnmounted(() => {
         :class="{ flying }"
         :style="cloneStyle(box)"
       >
-        <NumberblockView fill :value="cloneValues[index]" />
+        <ProductFigure
+          v-if="proportional && cloneValues[index] !== null"
+          :value="cloneValues[index]!"
+          :px-per-unit="sharedPx"
+          :cell-width="box.width"
+          :cell-height="box.height"
+          awake
+        />
+        <NumberblockView v-else fill :value="cloneValues[index]" />
       </div>
     </div>
   </div>
@@ -364,6 +517,7 @@ onUnmounted(() => {
   min-width: 0;
   min-height: 0;
   width: 100%;
+  height: 100%;
 }
 
 .figure.waiting {

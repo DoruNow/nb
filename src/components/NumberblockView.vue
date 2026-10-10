@@ -1,6 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue"
-import { displaySize } from "../lib/numberblockScale"
+import {
+  displaySize,
+  displaySizeForParts,
+  packFigure,
+} from "../lib/numberblockScale"
 import {
   numberblocksAssets,
   splitOfficialAddends,
@@ -18,6 +22,8 @@ const props = defineProps<{
   pxPerUnit?: number
   /** Size the costumes to the largest row that fits the parent box. */
   fill?: boolean
+  /** Stack costumes in a column (with fill: fit the stack in the parent). */
+  stack?: boolean
 }>()
 
 const root = ref<HTMLElement | null>(null)
@@ -31,20 +37,25 @@ const sized = computed(
   () => !props.fill && props.pxPerUnit !== undefined && props.pxPerUnit > 0,
 )
 
+const packed = computed(() =>
+  packFigure(addends.value, frame.value.width, frame.value.height),
+)
+
 const fitted = computed(() => {
   if (!props.fill) return null
-  return fitImageRow(
-    assets.value.map((asset) => asset.width / Math.max(asset.height, 1)),
-    frame.value.width,
-    frame.value.height,
+  const aspects = assets.value.map(
+    (asset) => asset.width / Math.max(asset.height, 1),
   )
+  return props.stack
+    ? fitImageStack(aspects, frame.value.width, frame.value.height)
+    : fitImageRow(aspects, frame.value.width, frame.value.height)
 })
 
-function sizeFor(part: number, asset: NumberblockAsset) {
+function sizeFor(part: number, _asset: NumberblockAsset) {
   if (!sized.value || props.pxPerUnit === undefined) return undefined
-  const { height } = displaySize(part, props.pxPerUnit)
-  const aspect = asset.width / Math.max(asset.height, 1)
-  return { width: height * aspect, height }
+  // Both edges from the shared cube scale — not image aspect — so a step
+  // Forty-Five keeps the same unit size as Hundred beside/above it.
+  return displaySize(part, props.pxPerUnit)
 }
 
 /**
@@ -70,6 +81,29 @@ function fitImageRow(
   }))
 }
 
+/**
+ * Largest equal-width column of pictures that fits a box.
+ */
+function fitImageStack(
+  aspects: number[],
+  width: number,
+  height: number,
+): { width: number; height: number }[] | null {
+  if (aspects.length === 0 || width <= 0 || height <= 0) return null
+  const heightPerWidth = aspects.map((aspect) => 1 / Math.max(aspect, 0.001))
+  const sum = heightPerWidth.reduce((total, part) => total + part, 0)
+  if (sum <= 0) return null
+  const gaps = IMAGE_GAP * (aspects.length - 1)
+  const availableH = Math.max(0, height - gaps - 2)
+  const availableW = Math.max(0, width - 2)
+  const stackWidth = Math.min(availableW, availableH / sum)
+  if (stackWidth <= 0) return null
+  return aspects.map((aspect) => ({
+    width: stackWidth,
+    height: stackWidth / aspect,
+  }))
+}
+
 function imageStyle(asset: NumberblockAsset, index: number) {
   if (props.fill) {
     const box = fitted.value?.[index]
@@ -80,6 +114,23 @@ function imageStyle(asset: NumberblockAsset, index: number) {
   if (!size) return undefined
   return { width: `${size.width}px`, height: `${size.height}px` }
 }
+
+const rootStyle = computed(() => {
+  if (props.fill) return { gap: `${IMAGE_GAP}px` }
+  if (!sized.value || props.pxPerUnit === undefined) return undefined
+  const size = displaySizeForParts(
+    addends.value,
+    props.pxPerUnit,
+    frame.value.width,
+    frame.value.height,
+  )
+  return {
+    gap: `${IMAGE_GAP}px`,
+    "--cols": String(Math.max(1, packed.value.columns)),
+    width: `${size.width}px`,
+    height: `${size.height}px`,
+  }
+})
 
 function measureFrame() {
   const parent = root.value?.parentElement
@@ -93,7 +144,7 @@ function measureFrame() {
 function watchFrame() {
   resize?.disconnect()
   resize = undefined
-  if (!props.fill) return
+  if (!props.fill && !sized.value) return
   const parent = root.value?.parentElement
   if (!parent) return
   resize = new ResizeObserver(() => measureFrame())
@@ -134,7 +185,12 @@ watch(
 
 onMounted(watchFrame)
 
-watch(() => props.fill, watchFrame)
+watch(
+  () => [props.fill, props.pxPerUnit] as const,
+  () => {
+    watchFrame()
+  },
+)
 
 onUnmounted(() => {
   requestId += 1
@@ -151,8 +207,10 @@ onUnmounted(() => {
       speak: speaking && value !== null,
       sized,
       fit: fill,
+      stack: fill && stack,
+      grid: sized,
     }"
-    :style="fill ? { gap: `${IMAGE_GAP}px` } : undefined"
+    :style="rootStyle"
   >
     <img
       v-for="(asset, index) in assets"
@@ -175,8 +233,26 @@ onUnmounted(() => {
   gap: 0.12em;
   width: 100%;
   height: 100%;
+  min-width: 0;
   min-height: 0;
   transform-origin: bottom center;
+}
+
+.nb.stack {
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.nb.sized.grid {
+  display: grid;
+  grid-template-columns: repeat(var(--cols, 1), max-content);
+  align-items: end;
+  justify-content: center;
+  justify-items: center;
+  flex: 0 0 auto;
+  max-width: 100%;
+  max-height: 100%;
 }
 
 .nb img {
@@ -187,6 +263,11 @@ onUnmounted(() => {
   object-fit: contain;
   object-position: bottom center;
   filter: drop-shadow(0 10px 8px rgba(70, 45, 15, 0.22));
+}
+
+.nb.sized img {
+  /* Box is wide×tall unit cells; contain keeps cubes square if the costume matches. */
+  object-fit: contain;
 }
 
 .nb:not(.sized):not(.fit) img {

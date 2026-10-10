@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, nextTick, onUnmounted, reactive, ref } from "vue"
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from "vue"
 import NumberblockView from "../components/NumberblockView.vue"
+import ProductFigure from "../components/ProductFigure.vue"
 import MathInput from "../components/MathInput.vue"
 import { COUNT_LENGTH, multiple } from "../lib/math"
 import {
@@ -13,8 +14,17 @@ import {
   type TimesLoopHost,
   type TimesMotion,
 } from "../lib/motion"
+import { logCostumeCubeScale, logSharedPxChoice } from "../lib/cubeScaleDebug"
+import {
+  fitPxPerUnitBoxes,
+  scaleFromLargestCostume,
+} from "../lib/numberblockScale"
 import { glowFor, paintClass, paintStyle } from "../lib/numberblockColors"
-import { numberblocksAssets } from "../lib/numberblocksSb3"
+import {
+  numberblocksAssets,
+  sceneCubeUnits,
+  splitOfficialAddends,
+} from "../lib/numberblocksSb3"
 import { cancelSpeech, unlockSpeech } from "../lib/speak"
 
 type Conflict = "queue" | "replace"
@@ -326,8 +336,119 @@ function clearLog() {
   events.value = []
 }
 
+/** Proportional cube-scale harness (same math as the app’s Proportional view). */
+const scaleValue = ref(141)
+const scaleCell = ref(320)
+const scalePx = ref(0)
+const scaleParts = ref<
+  Array<{ value: number; wide: number; tall: number; cubePx: number }>
+>([])
+const scaleStatus = ref<"idle" | "ok" | "fail">("idle")
+const scaleMessage = ref("Run check to compare cube sizes across parts.")
+const scaleStage = ref<HTMLElement | null>(null)
+
+const scalePresets = [45, 100, 141, 145, 200, 2500] as const
+
+async function runScaleCheck() {
+  scaleStatus.value = "idle"
+  scaleMessage.value = "Measuring…"
+  const value = Math.max(0, Math.floor(scaleValue.value))
+  const cell = Math.max(40, scaleCell.value)
+  try {
+    const scenes = await numberblocksAssets.getNumberblockScene(value)
+    const addends = splitOfficialAddends(value)
+    const units = scenes.map((scene, index) =>
+      sceneCubeUnits(scene, addends[index] ?? value),
+    )
+    const costumes = units.map((unit, index) => {
+      const part = addends[index] ?? value
+      const soloPx = fitPxPerUnitBoxes([unit], cell, cell)
+      return {
+        part,
+        figureValue: value,
+        units: unit,
+        cellWidth: cell,
+        cellHeight: cell,
+        soloPx,
+        squaresFound: scenes[index]?.squareCount ?? 0,
+      }
+    })
+    const scale = scaleFromLargestCostume({
+      costumes: costumes.map((costume) => ({
+        part: costume.part,
+        units: costume.units,
+        cellWidth: costume.cellWidth,
+        cellHeight: costume.cellHeight,
+      })),
+    })
+    const px = scale.pxPerUnit
+    scalePx.value = px
+    const rows = units.map((unit, index) => ({
+      value: addends[index] ?? value,
+      wide: unit.wide,
+      tall: unit.tall,
+      cubePx: px,
+    }))
+    scaleParts.value = rows
+    logSharedPxChoice({
+      where: "e2e/proportional-scale",
+      costumes,
+      chosenPart: scale.largestPart,
+      chosenPx: px,
+      refCellWidth: scale.cellWidth,
+      refCellHeight: scale.cellHeight,
+      limitingPart: scale.limitingPart,
+    })
+    logCostumeCubeScale({
+      where: "e2e/proportional-scale",
+      value,
+      scenes,
+      partValues: addends,
+      pxPerUnit: px,
+      pxSource: `cell from costume ${scale.largestPart}; px limited by ${scale.limitingPart}`,
+      cellWidth: scale.cellWidth,
+      cellHeight: scale.cellHeight,
+    })
+    await nextTick()
+    const fits = scaleStage.value?.querySelectorAll(".fit") ?? []
+    const measured: number[] = []
+    fits.forEach((el, index) => {
+      if (!(el instanceof HTMLElement)) return
+      const unit = units[index]
+      if (!unit || unit.tall <= 0) return
+      measured.push(el.getBoundingClientRect().height / unit.tall)
+    })
+    if (measured.length < 2) {
+      scaleStatus.value = "ok"
+      scaleMessage.value = `Single part · shared cube ${px.toFixed(2)}px (cell ${cell}×${cell}).`
+      return
+    }
+    const min = Math.min(...measured)
+    const max = Math.max(...measured)
+    const ratio = max / Math.max(min, 0.001)
+    if (ratio <= 1.08) {
+      scaleStatus.value = "ok"
+      scaleMessage.value = `PASS · cube sizes within 8% (${min.toFixed(2)}–${max.toFixed(2)}px).`
+    } else {
+      scaleStatus.value = "fail"
+      scaleMessage.value = `FAIL · cube sizes diverge ×${ratio.toFixed(2)} (${min.toFixed(2)}–${max.toFixed(2)}px).`
+    }
+  } catch (error) {
+    scaleStatus.value = "fail"
+    scaleMessage.value = error instanceof Error ? error.message : String(error)
+    scaleParts.value = []
+  }
+}
+
+watch([scaleValue, scaleCell], () => {
+  void runScaleCheck()
+})
+
 rebuild()
 poll = setInterval(refreshStatus, 100)
+onMounted(() => {
+  void runScaleCheck()
+})
 
 onUnmounted(() => {
   if (poll) clearInterval(poll)
@@ -538,6 +659,60 @@ onUnmounted(() => {
         </ol>
       </section>
     </div>
+
+    <section id="proportional-scale" class="panel scale-panel">
+      <h2>Proportional cube scale</h2>
+      <p class="explain">
+        Shared <code>pxPerUnit</code> from SVG cube detection (same path as app
+        <strong>Proportional</strong>). Parts of a composite (e.g. 141 → 100+41)
+        must keep the same cube size — not crush primes into a 1×n strip.
+      </p>
+      <div class="scale-controls">
+        <label>
+          <span class="field-name">Value</span>
+          <input v-model.number="scaleValue" type="number" min="0" step="1" />
+        </label>
+        <label>
+          <span class="field-name">Cell (px)</span>
+          <input v-model.number="scaleCell" type="number" min="40" step="10" />
+        </label>
+        <div class="preset-row">
+          <button
+            v-for="preset in scalePresets"
+            :key="preset"
+            type="button"
+            class="ghost"
+            @click="scaleValue = preset"
+          >
+            {{ preset }}
+          </button>
+        </div>
+        <button type="button" class="primary" @click="runScaleCheck">
+          Run cube-size check
+        </button>
+      </div>
+      <p class="scale-result" :data-status="scaleStatus">{{ scaleMessage }}</p>
+      <p class="hint">shared pxPerUnit = {{ scalePx.toFixed(3) }}</p>
+      <ul class="scale-parts">
+        <li v-for="part in scaleParts" :key="part.value + '-' + part.wide">
+          {{ part.value }} · {{ part.wide.toFixed(1) }}×{{ part.tall.toFixed(1) }}
+          cubes · {{ part.cubePx.toFixed(2) }}px / cube
+        </li>
+      </ul>
+      <div
+        ref="scaleStage"
+        class="scale-stage"
+        :style="{ width: `${scaleCell}px`, height: `${scaleCell}px` }"
+      >
+        <ProductFigure
+          :value="scaleValue"
+          :px-per-unit="scalePx"
+          :cell-width="scaleCell"
+          :cell-height="scaleCell"
+          awake
+        />
+      </div>
+    </section>
   </div>
 </template>
 
@@ -910,10 +1085,63 @@ code {
   font-size: 0.9em;
 }
 
+.scale-panel {
+  margin-top: 1.25rem;
+}
+
+.scale-controls {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 12rem)) 1fr auto;
+  gap: 0.75rem;
+  align-items: end;
+  margin: 0.85rem 0;
+}
+
+.preset-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: center;
+}
+
+.scale-result {
+  margin: 0.35rem 0;
+  font-weight: 800;
+}
+
+.scale-result[data-status="ok"] {
+  color: var(--ok);
+}
+
+.scale-result[data-status="fail"] {
+  color: #a12828;
+}
+
+.scale-parts {
+  margin: 0.35rem 0 0.75rem;
+  padding: 0;
+  list-style: none;
+  font-size: 0.88rem;
+  opacity: 0.9;
+}
+
+.scale-stage {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0.5rem 0 0;
+  border-radius: 0.85rem;
+  background: rgba(255, 255, 255, 0.55);
+  box-shadow: inset 0 0 0 1px var(--line);
+  overflow: hidden;
+}
+
 @media (max-width: 900px) {
   .hero-run,
   .stage,
-  .grid {
+  .grid,
+  .scale-controls {
     grid-template-columns: 1fr;
   }
 }

@@ -10,7 +10,12 @@ import {
   type SpeakingPart,
   type TimesLoopHost,
 } from "../lib/motion"
-import { displaySizeForParts, figureUnits } from "../lib/numberblockScale"
+import {
+  displaySizeForParts,
+  figureUnits,
+  pxPerUnitShared,
+  type ScaleFigure,
+} from "../lib/numberblockScale"
 import { glowFor, paintClass, paintStyle } from "../lib/numberblockColors"
 import { numberblocksAssets, splitOfficialAddends } from "../lib/numberblocksSb3"
 import {
@@ -37,6 +42,7 @@ const props = defineProps<{
   justLockedIndex: number | null
   activeField: TimesField
   releaseAnswer?: () => void
+  proportional?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -159,8 +165,61 @@ function fitCopies(
   return px * COSTUME_PAD
 }
 
+function copyCell(count: number, along: number, cross: number) {
+  const n = Math.max(1, count)
+  const gapPx = Math.max(0, n - 1) * 4
+  return {
+    width: Math.max(0, (along - gapPx) / n),
+    height: Math.max(0, cross),
+  }
+}
+
+const sharedPx = computed(() => {
+  if (!props.proportional) return null
+  const figures: ScaleFigure[] = []
+  if (props.step !== null) {
+    if (revealedRows.value) {
+      const cell = copyCell(COUNT_LENGTH, stepsWidth.value, stepsHeight.value)
+      figures.push({
+        value: props.step,
+        parts: partsFor(props.step),
+        cellWidth: cell.width,
+        cellHeight: cell.height,
+      })
+    } else {
+      const cell = copyCell(playK.value, stageWidth.value, stageHeight.value)
+      figures.push({
+        value: props.step,
+        parts: partsFor(props.step),
+        cellWidth: cell.width,
+        cellHeight: cell.height,
+      })
+    }
+  }
+  if (revealedRows.value) {
+    for (const product of props.figured) {
+      figures.push({
+        value: product,
+        parts: partsFor(product),
+        cellWidth: resultWidth.value,
+        cellHeight: resultHeight.value,
+      })
+    }
+  }
+  if (passingK.value !== null) {
+    figures.push({
+      value: passingK.value,
+      parts: partsFor(passingK.value),
+      cellWidth: stageWidth.value * 0.55,
+      cellHeight: stageHeight.value * 0.72,
+    })
+  }
+  return pxPerUnitShared({ figures })
+})
+
 const stagePx = computed(() => {
   if (props.step === null) return 1
+  if (sharedPx.value !== null) return sharedPx.value
   return fitCopies(
     playK.value,
     partsFor(props.step),
@@ -177,6 +236,7 @@ const stageBox = computed(() => {
 
 const rowPx = computed(() => {
   if (props.step === null) return 1
+  if (sharedPx.value !== null) return sharedPx.value
   return fitCopies(
     COUNT_LENGTH,
     partsFor(props.step),
@@ -192,6 +252,7 @@ const rowBox = computed(() => {
 })
 
 function resultScale(value: number) {
+  if (sharedPx.value !== null) return sharedPx.value
   const fit = fitCopies(1, partsFor(value), resultWidth.value, resultHeight.value)
   return Math.min(rowPx.value, fit)
 }
@@ -203,6 +264,7 @@ function resultBox(value: number) {
 
 const passPx = computed(() => {
   if (passingK.value === null) return 1
+  if (sharedPx.value !== null) return sharedPx.value
   const { tall } = figureUnits(partsFor(passingK.value))
   return (stageHeight.value * 0.72) / Math.max(tall, 1)
 })

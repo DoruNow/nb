@@ -1,21 +1,62 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue"
+import {
+  computed,
+  nextTick,
+  onMounted,
+  onUnmounted,
+  ref,
+  watch,
+} from "vue"
 import { TABLE_MAX } from "../lib/math"
 import { glowFor, paintClass, paintStyle } from "../lib/numberblockColors"
+import { logSharedPxChoice } from "../lib/cubeScaleDebug"
+import {
+  fitPxPerUnitBoxes,
+  scaleFromLargestCostume,
+} from "../lib/numberblockScale"
+import {
+  numberblocksAssets,
+  sceneCubeUnits,
+  splitOfficialAddends,
+} from "../lib/numberblocksSb3"
+import {
+  cancelSpeech,
+  speakNumberName,
+  speakOperator,
+  unlockSpeech,
+} from "../lib/speak"
 import NumberblockView from "./NumberblockView.vue"
 import ProductFigure from "./ProductFigure.vue"
 
 const props = withDefaults(
   defineProps<{
     max?: number
+    proportional?: boolean
   }>(),
-  { max: TABLE_MAX },
+  { max: TABLE_MAX, proportional: false },
 )
 
 type Picked = { row: number; col: number }
+/** Which axis stays opaque while the fact is read aloud. */
+type SpeakFocus = "row" | "col" | "both"
+/** Which fact number jiggles while it is spoken. */
+type JigglePart = "row" | "col" | "product"
 
 const hover = ref<{ row: number | null; col: number | null } | null>(null)
 const picked = ref<Picked | null>(null)
+const speakFocus = ref<SpeakFocus>("both")
+const jigglePart = ref<JigglePart | null>(null)
+const sheetEl = ref<HTMLElement | null>(null)
+const stageEl = ref<HTMLElement | null>(null)
+const cellWidth = ref(0)
+const cellHeight = ref(0)
+const stageWidth = ref(0)
+const stageHeight = ref(0)
+const tablePx = ref<number | undefined>(undefined)
+const detailPx = ref<number | undefined>(undefined)
+let speakGen = 0
+let resize: ResizeObserver | undefined
+let scaleRequest = 0
 
 const factors = computed(() => {
   const size = Math.min(TABLE_MAX, Math.max(1, Math.floor(props.max)))
@@ -36,6 +77,131 @@ const selectedValue = computed(() => {
 })
 
 const selectedGlow = computed(() => glowFor(selectedValue.value) ?? "#c4a57a")
+
+async function recomputeScale() {
+  if (!props.proportional) {
+    tablePx.value = undefined
+    detailPx.value = undefined
+    return
+  }
+  const id = ++scaleRequest
+  if (cellWidth.value > 0 && cellHeight.value > 0) {
+    const seen = new Set<number>()
+    const costumes: Array<{
+      part: number
+      figureValue?: number
+      units: ReturnType<typeof sceneCubeUnits>
+      cellWidth: number
+      cellHeight: number
+      soloPx: number
+      squaresFound: number
+    }> = []
+    for (const row of factors.value) {
+      for (const col of factors.value) {
+        const value = row * col
+        if (seen.has(value)) continue
+        seen.add(value)
+        try {
+          const scenes = await numberblocksAssets.getNumberblockScene(value)
+          if (id !== scaleRequest) return
+          const parts = splitOfficialAddends(value)
+          for (let index = 0; index < scenes.length; index += 1) {
+            const scene = scenes[index]!
+            const part = parts[index] ?? value
+            const units = sceneCubeUnits(scene, part)
+            const soloPx = fitPxPerUnitBoxes(
+              [units],
+              cellWidth.value,
+              cellHeight.value,
+            )
+            costumes.push({
+              part,
+              figureValue: value,
+              units,
+              cellWidth: cellWidth.value,
+              cellHeight: cellHeight.value,
+              soloPx,
+              squaresFound: scene.squareCount,
+            })
+          }
+        } catch {
+          // skip
+        }
+      }
+    }
+    if (id !== scaleRequest) return
+    if (costumes.length > 0) {
+      const scale = scaleFromLargestCostume({
+        costumes: costumes.map((costume) => ({
+          part: costume.part,
+          units: costume.units,
+          cellWidth: costume.cellWidth,
+          cellHeight: costume.cellHeight,
+        })),
+      })
+      tablePx.value = scale.pxPerUnit > 0 ? scale.pxPerUnit : undefined
+      if (scale.pxPerUnit > 0) {
+        logSharedPxChoice({
+          where: "TimesTable",
+          costumes,
+          chosenPart: scale.largestPart,
+          chosenPx: scale.pxPerUnit,
+          refCellWidth: scale.cellWidth,
+          refCellHeight: scale.cellHeight,
+          limitingPart: scale.limitingPart,
+        })
+      }
+    } else {
+      tablePx.value = undefined
+    }
+  }
+  if (
+    selectedValue.value !== null &&
+    stageWidth.value > 0 &&
+    stageHeight.value > 0
+  ) {
+    try {
+      const scenes = await numberblocksAssets.getNumberblockScene(
+        selectedValue.value,
+      )
+      if (id !== scaleRequest) return
+      const parts = splitOfficialAddends(selectedValue.value)
+      detailPx.value = scaleFromLargestCostume({
+        costumes: scenes.map((scene, index) => ({
+          part: parts[index] ?? selectedValue.value!,
+          units: sceneCubeUnits(scene, parts[index] ?? selectedValue.value!),
+          cellWidth: stageWidth.value,
+          cellHeight: stageHeight.value,
+        })),
+      }).pxPerUnit
+    } catch {
+      detailPx.value = undefined
+    }
+  } else {
+    detailPx.value = undefined
+  }
+}
+
+function measureCells() {
+  const cell = sheetEl.value?.querySelector(".cell")
+  if (cell instanceof HTMLElement) {
+    cellWidth.value = Math.max(0, cell.clientWidth - 4)
+    cellHeight.value = Math.max(0, cell.clientHeight - 4)
+  }
+  if (stageEl.value) {
+    stageWidth.value = Math.max(0, stageEl.value.clientWidth - 8)
+    stageHeight.value = Math.max(0, stageEl.value.clientHeight - 8)
+  }
+  void recomputeScale()
+}
+
+function observe() {
+  resize?.disconnect()
+  resize = new ResizeObserver(measureCells)
+  if (sheetEl.value) resize.observe(sheetEl.value)
+  if (stageEl.value) resize.observe(stageEl.value)
+  measureCells()
+}
 
 function product(row: number, col: number) {
   return row * col
@@ -67,6 +233,28 @@ function isCellPicked(row: number, col: number) {
   return picked.value?.row === row && picked.value?.col === col
 }
 
+function isRowKept(row: number) {
+  if (picked.value?.row !== row) return false
+  return speakFocus.value === "row" || speakFocus.value === "both"
+}
+
+function isColKept(col: number) {
+  if (picked.value?.col !== col) return false
+  return speakFocus.value === "col" || speakFocus.value === "both"
+}
+
+function isCellKept(row: number, col: number) {
+  return isRowKept(row) || isColKept(col)
+}
+
+function isRowJiggle(row: number) {
+  return jigglePart.value === "row" && picked.value?.row === row
+}
+
+function isColJiggle(col: number) {
+  return jigglePart.value === "col" && picked.value?.col === col
+}
+
 function cellGlow(row: number, col: number) {
   if (isRowHot(row)) return headerGlow(row)
   if (isColHot(col)) return headerGlow(col)
@@ -89,15 +277,64 @@ function onLeave() {
   hover.value = null
 }
 
+function stopNarration() {
+  speakGen += 1
+  cancelSpeech()
+  numberblocksAssets.stopAllSounds()
+  speakFocus.value = "both"
+  jigglePart.value = null
+}
+
+function pause(ms: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms))
+}
+
+async function narrateFact(row: number, col: number, gen: number) {
+  speakFocus.value = "row"
+  jigglePart.value = "row"
+  await speakNumberName(row)
+  if (gen !== speakGen) return
+  await pause(500)
+  if (gen !== speakGen) return
+  jigglePart.value = null
+
+  await speakOperator("times")
+  if (gen !== speakGen) return
+
+  speakFocus.value = "col"
+  jigglePart.value = "col"
+  await speakNumberName(col)
+  jigglePart.value = null
+  if (gen !== speakGen) return
+
+  await speakOperator("equals")
+  if (gen !== speakGen) return
+
+  speakFocus.value = "both"
+  jigglePart.value = "product"
+  await speakNumberName(row * col)
+  if (gen === speakGen) jigglePart.value = null
+}
+
 function pickProduct(row: number, col: number) {
   if (isCellPicked(row, col)) {
+    stopNarration()
     picked.value = null
     return
   }
+
   picked.value = { row, col }
+  const gen = ++speakGen
+  speakFocus.value = "row"
+  unlockSpeech()
+  cancelSpeech()
+  numberblocksAssets.stopAllSounds()
+  void numberblocksAssets.unlockAudio()
+  void narrateFact(row, col, gen)
 }
 
 function clearPicked() {
+  stopNarration()
   picked.value = null
 }
 
@@ -107,20 +344,38 @@ watch(
     const size = factors.value[factors.value.length - 1] ?? 0
     const current = picked.value
     if (!current) return
-    if (current.row > size || current.col > size) picked.value = null
+    if (current.row > size || current.col > size) {
+      stopNarration()
+      picked.value = null
+    }
   },
 )
+
+watch(
+  () => [props.proportional, props.max, open.value] as const,
+  async () => {
+    await nextTick()
+    observe()
+  },
+)
+
+onMounted(observe)
+
+onUnmounted(() => {
+  stopNarration()
+  resize?.disconnect()
+})
 </script>
 
 <template>
   <div
     class="board"
-    :class="{ open }"
+    :class="{ open, proportional }"
     role="region"
     aria-label="Multiplication table"
     @pointerleave="onLeave"
   >
-    <table class="sheet" :style="gridStyle">
+    <table ref="sheetEl" class="sheet" :style="gridStyle">
       <thead>
         <tr>
           <th class="corner" scope="col">
@@ -132,7 +387,11 @@ watch(
             :key="`col-${col}`"
             scope="col"
             class="head col-head"
-            :class="{ hot: isColHot(col) }"
+            :class="{
+              hot: isColHot(col),
+              kept: isColKept(col),
+              jiggle: isColJiggle(col),
+            }"
             :style="{ '--glow': headerGlow(col) }"
             @pointerenter="onColHeadEnter(col)"
           >
@@ -147,7 +406,11 @@ watch(
           <th
             scope="row"
             class="head row-head"
-            :class="{ hot: isRowHot(row) }"
+            :class="{
+              hot: isRowHot(row),
+              kept: isRowKept(row),
+              jiggle: isRowJiggle(row),
+            }"
             :style="{ '--glow': headerGlow(row) }"
             @pointerenter="onRowHeadEnter(row)"
           >
@@ -163,6 +426,7 @@ watch(
               hot: isCellHot(row, col),
               on: isCellOn(row, col) && !isCellPicked(row, col),
               picked: isCellPicked(row, col),
+              kept: isCellKept(row, col),
             }"
             :style="{ '--glow': cellGlow(row, col) }"
           >
@@ -177,7 +441,14 @@ watch(
               <ProductFigure
                 :value="product(row, col)"
                 :alt="String(product(row, col))"
-                :awake="isCellOn(row, col) && !isCellPicked(row, col)"
+                :awake="
+                  proportional ||
+                  isCellOn(row, col) ||
+                  isCellPicked(row, col)
+                "
+                :px-per-unit="tablePx"
+                :cell-width="cellWidth"
+                :cell-height="cellHeight"
               />
             </button>
           </td>
@@ -201,26 +472,49 @@ watch(
           ×
         </button>
         <p class="fact">
-          <span :class="paintClass(picked.row)" :style="paintStyle(picked.row)">{{
-            picked.row
-          }}</span>
+          <span
+            class="fact-num"
+            :class="[paintClass(picked.row), { jiggle: jigglePart === 'row' }]"
+            :style="paintStyle(picked.row)"
+            >{{ picked.row }}</span
+          >
           <span class="op">×</span>
-          <span :class="paintClass(picked.col)" :style="paintStyle(picked.col)">{{
-            picked.col
-          }}</span>
+          <span
+            class="fact-num"
+            :class="[paintClass(picked.col), { jiggle: jigglePart === 'col' }]"
+            :style="paintStyle(picked.col)"
+            >{{ picked.col }}</span
+          >
           <span class="op">=</span>
           <span
-            :class="paintClass(selectedValue)"
+            class="fact-num"
+            :class="[
+              paintClass(selectedValue),
+              { jiggle: jigglePart === 'product' },
+            ]"
             :style="paintStyle(selectedValue)"
             >{{ selectedValue }}</span
           >
         </p>
-        <div class="stage">
+        <div ref="stageEl" class="stage">
+          <ProductFigure
+            v-if="proportional && selectedValue !== null"
+            :key="`prop-${picked.row}x${picked.col}`"
+            :value="selectedValue"
+            :alt="String(selectedValue)"
+            :px-per-unit="detailPx"
+            :cell-width="stageWidth"
+            :cell-height="stageHeight"
+            awake
+          />
           <NumberblockView
+            v-else
             :key="`${picked.row}x${picked.col}`"
             :value="selectedValue"
             :alt="String(selectedValue)"
             keep-numeral
+            fill
+            stack
           />
         </div>
       </template>
@@ -230,6 +524,7 @@ watch(
 
 <style scoped>
 .board {
+  --fact-size: clamp(1.2rem, 7.5cqmin, 2rem);
   display: flex;
   align-items: stretch;
   gap: 0;
@@ -276,6 +571,15 @@ watch(
   min-width: 0;
   min-height: 0;
   user-select: none;
+  transition: opacity 0.2s ease;
+}
+
+.board.open :is(.corner, .head, .cell) {
+  opacity: 0.1;
+}
+
+.board.open :is(.head, .cell).kept {
+  opacity: 1;
 }
 
 .corner,
@@ -294,13 +598,55 @@ watch(
 }
 
 .head {
+  position: relative;
+  z-index: 0;
+  overflow: visible;
   font-size: clamp(0.72rem, 5.6cqmin, 1.35rem);
   border-radius: 0.45rem;
   background: color-mix(in srgb, var(--glow) 16%, rgba(255, 255, 255, 0.42));
+  transition:
+    opacity 0.2s ease,
+    font-size 0.22s ease,
+    background 0.2s ease;
 }
 
 .head.hot {
   background: color-mix(in srgb, var(--glow) 30%, #fff);
+}
+
+.head.kept {
+  z-index: 4;
+  font-size: var(--fact-size);
+}
+
+.head.jiggle > span,
+.fact-num.jiggle {
+  display: inline-block;
+  animation: jiggle 0.7s ease-in-out infinite;
+  transform-origin: center bottom;
+}
+
+@keyframes jiggle {
+  0%,
+  100% {
+    transform: translateY(0) rotate(0deg);
+  }
+  22% {
+    transform: translateY(-0.12em) rotate(-8deg);
+  }
+  48% {
+    transform: translateY(-0.04em) rotate(7deg);
+  }
+  74% {
+    transform: translateY(-0.1em) rotate(-6deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .head.jiggle > span,
+  .fact-num.jiggle {
+    animation: none;
+  }
 }
 
 .cell {
@@ -324,10 +670,21 @@ watch(
   overflow: hidden;
 }
 
+/* Proportional keeps eyes/limbs; let costume life paint past the cube box. */
+.board.proportional .cell,
+.board.proportional .cell.picked {
+  overflow: visible;
+}
+
+.board.proportional .cell.on,
+.board.proportional .cell.picked {
+  z-index: 2;
+}
+
 .hit {
   appearance: none;
   display: flex;
-  align-items: stretch;
+  align-items: center;
   justify-content: center;
   width: 100%;
   height: 100%;
@@ -391,6 +748,10 @@ watch(
   overflow: hidden;
 }
 
+.board.proportional .detail.show {
+  overflow: visible;
+}
+
 .close {
   appearance: none;
   align-self: end;
@@ -414,7 +775,7 @@ watch(
   justify-content: center;
   gap: 0.15rem 0.25rem;
   margin: 0.05rem 0.5rem 0.15rem;
-  font-size: clamp(1.15rem, 2.8vw, 1.85rem);
+  font-size: var(--fact-size);
   font-weight: 800;
   font-variant-numeric: tabular-nums;
   line-height: 1;
@@ -425,17 +786,19 @@ watch(
 }
 
 .stage {
+  position: relative;
   flex: 1 1 auto;
   display: flex;
   align-items: stretch;
   justify-content: center;
+  min-width: 0;
   min-height: 0;
+  overflow: hidden;
   padding: 0.1rem 0.55rem 0.65rem;
 }
 
-.stage :deep(.nb) {
-  width: 100%;
-  height: 100%;
+.board.proportional .stage {
+  overflow: visible;
 }
 
 @media (max-width: 720px) {
