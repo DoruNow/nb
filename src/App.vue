@@ -240,8 +240,7 @@ onUnmounted(() => {
 <template>
   <div class="room" :class="{ table: mode === 'table' }">
     <header class="topbar">
-      <div class="nav">
-        <div class="modes" role="tablist" aria-label="Mode">
+      <div class="modes" role="tablist" aria-label="Mode">
         <button
           type="button"
           role="tab"
@@ -278,8 +277,6 @@ onUnmounted(() => {
         >
           Table
         </button>
-        </div>
-        <RouterLink class="sprites-link" to="/sprites">Sprites</RouterLink>
       </div>
       <label v-if="mode === 'table'" class="table-max">
         <span>Up to</span>
@@ -429,7 +426,6 @@ onUnmounted(() => {
   padding: 0.65rem 1rem 0;
 }
 
-.nav,
 .modes,
 .langs {
   display: flex;
@@ -474,7 +470,6 @@ onUnmounted(() => {
 }
 
 .modes button,
-.sprites-link,
 .langs button,
 .lang-other {
   appearance: none;

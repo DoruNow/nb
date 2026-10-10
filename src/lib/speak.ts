@@ -197,7 +197,7 @@ const OPERATOR_TEXT: Record<string, OperatorPhrases> = {
   },
 }
 
-export type UiPhraseKey = "chooseStep" | "start" | "orEnter"
+export type UiPhraseKey = "chooseStep" | "pressEnter"
 
 type UiPhrases = Record<UiPhraseKey, string>
 
@@ -205,108 +205,87 @@ type UiPhrases = Record<UiPhraseKey, string>
 const UI_TEXT: Record<string, UiPhrases> = {
   en: {
     chooseStep: "Choose a step",
-    start: "Start",
-    orEnter: "or press Enter",
+    pressEnter: "Press Enter",
   },
   nl: {
     chooseStep: "Kies een stap",
-    start: "Start",
-    orEnter: "of druk op Enter",
+    pressEnter: "Druk op Enter",
   },
   it: {
     chooseStep: "Scegli un passo",
-    start: "Inizia",
-    orEnter: "oppure premi Invio",
+    pressEnter: "Premi Invio",
   },
   fr: {
     chooseStep: "Choisis un pas",
-    start: "Commencer",
-    orEnter: "ou appuie sur Entrée",
+    pressEnter: "Appuie sur Entrée",
   },
   de: {
     chooseStep: "Wähle einen Schritt",
-    start: "Start",
-    orEnter: "oder drück Enter",
+    pressEnter: "Drück Enter",
   },
   es: {
     chooseStep: "Elige un paso",
-    start: "Empezar",
-    orEnter: "o pulsa Intro",
+    pressEnter: "Pulsa Intro",
   },
   pt: {
     chooseStep: "Escolhe um passo",
-    start: "Começar",
-    orEnter: "ou prime Enter",
+    pressEnter: "Prime Enter",
   },
   pl: {
     chooseStep: "Wybierz krok",
-    start: "Start",
-    orEnter: "albo naciśnij Enter",
+    pressEnter: "Naciśnij Enter",
   },
   uk: {
     chooseStep: "Обери крок",
-    start: "Почати",
-    orEnter: "або натисни Enter",
+    pressEnter: "Натисни Enter",
   },
   tr: {
     chooseStep: "Bir adım seç",
-    start: "Başla",
-    orEnter: "ya da Enter'a bas",
+    pressEnter: "Enter'a bas",
   },
   sv: {
     chooseStep: "Välj ett steg",
-    start: "Starta",
-    orEnter: "eller tryck på Enter",
+    pressEnter: "Tryck på Enter",
   },
   da: {
     chooseStep: "Vælg et trin",
-    start: "Start",
-    orEnter: "eller tryk på Enter",
+    pressEnter: "Tryk på Enter",
   },
   nb: {
     chooseStep: "Velg et steg",
-    start: "Start",
-    orEnter: "eller trykk Enter",
+    pressEnter: "Trykk Enter",
   },
   fi: {
     chooseStep: "Valitse askel",
-    start: "Aloita",
-    orEnter: "tai paina Enter",
+    pressEnter: "Paina Enter",
   },
   hu: {
     chooseStep: "Válassz egy lépést",
-    start: "Indítás",
-    orEnter: "vagy nyomd meg az Entert",
+    pressEnter: "Nyomd meg az Entert",
   },
   cs: {
     chooseStep: "Vyber krok",
-    start: "Start",
-    orEnter: "nebo stiskni Enter",
+    pressEnter: "Stiskni Enter",
   },
   el: {
     chooseStep: "Διάλεξε ένα βήμα",
-    start: "Ξεκίνα",
-    orEnter: "ή πάτα Enter",
+    pressEnter: "Πάτα Enter",
   },
   ar: {
     chooseStep: "اختر خطوة",
-    start: "ابدأ",
-    orEnter: "أو اضغط Enter",
+    pressEnter: "اضغط Enter",
   },
   zh: {
     chooseStep: "选一个步长",
-    start: "开始",
-    orEnter: "或按回车",
+    pressEnter: "按回车",
   },
   ja: {
     chooseStep: "いくつずつ？",
-    start: "スタート",
-    orEnter: "または Enter",
+    pressEnter: "Enterを押して",
   },
   ko: {
     chooseStep: "몇씩 셀까요?",
-    start: "시작",
-    orEnter: "또는 Enter",
+    pressEnter: "Enter를 눌러",
   },
 }
 

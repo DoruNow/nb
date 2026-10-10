@@ -2,15 +2,19 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue"
 import { COUNT_LENGTH, multiple } from "../lib/math"
 import {
-  displaySizeForParts,
-  rowScale,
-} from "../lib/numberblockScale"
+  TIMES_PASS_MS,
+  TIMES_SPEECH_PAUSE_MS,
+  createTimesCountSets,
+  createTimesMotion,
+  type AnimationUiEvent,
+  type SpeakingPart,
+  type TimesLoopHost,
+} from "../lib/motion"
+import { displaySizeForParts, figureUnits } from "../lib/numberblockScale"
 import { glowFor, paintClass, paintStyle } from "../lib/numberblockColors"
 import { numberblocksAssets, splitOfficialAddends } from "../lib/numberblocksSb3"
 import {
   cancelSpeech,
-  speakNumberName,
-  speakOperator,
   speechLanguage,
   uiPhrase,
 } from "../lib/speak"
@@ -18,8 +22,11 @@ import type { TimesField } from "../model/times"
 import MathInput from "./MathInput.vue"
 import NumberblockView from "./NumberblockView.vue"
 
-/** Silence after each spoken piece: 5 — times — 5 — equals — 25 */
-const SPEECH_PAUSE_MS = 400
+/** Room around each costume so the sprite padding and shadow stay visible. */
+const COSTUME_PAD = 0.78
+const COPY_GAP = 0.4
+const PASS_MS = TIMES_PASS_MS
+const SPEECH_PAUSE_MS = TIMES_SPEECH_PAUSE_MS
 
 const props = defineProps<{
   step: number | null
@@ -46,22 +53,29 @@ function releaseAnswer() {
 }
 
 const root = ref<HTMLElement | null>(null)
+const stageEl = ref<HTMLElement | null>(null)
 const listEl = ref<HTMLElement | null>(null)
 const stepsEl = ref<HTMLElement | null>(null)
 const resultEl = ref<HTMLElement | null>(null)
 const stepInput = ref<{ focus: () => void } | null>(null)
 const productInput = ref<{ focus: () => void } | null>(null)
-const rowInner = ref(48)
+const stageWidth = ref(640)
+const stageHeight = ref(320)
 const stepsWidth = ref(280)
+const stepsHeight = ref(64)
 const resultWidth = ref(72)
+const resultHeight = ref(64)
 const shakeBox = ref(false)
 const holdReleased = ref(false)
+const revealedRows = ref(false)
+const countdownIndex = ref<number | null>(null)
+const passingK = ref<number | null>(null)
+const passOn = ref(false)
 const speakingIndex = ref<number | null>(null)
-const speakingPart = ref<"k" | "times" | "step" | "equals" | "product" | null>(
-  null,
-)
+const speakingPart = ref<SpeakingPart | null>(null)
 
-let lockGen = 0
+/** Payload for the in-flight times motion set (read by custom set runners). */
+let motionData: { k?: number; index?: number } = {}
 let resize: ResizeObserver | undefined
 
 function partsFor(value: number) {
@@ -86,13 +100,8 @@ const editingStep = computed(
 
 const choosingStep = computed(() => props.step === null)
 
-const canStart = computed(
-  () => choosingStep.value && props.stepDraft !== null && props.stepDraft >= 1,
-)
-
 const chooseStepText = computed(() => uiPhrase("chooseStep"))
-const startText = computed(() => uiPhrase("start"))
-const orEnterText = computed(() => uiPhrase("orEnter"))
+const pressEnterText = computed(() => uiPhrase("pressEnter"))
 const setupLang = computed(() => speechLanguage.value)
 const setupDir = computed(() =>
   speechLanguage.value.split("-")[0]?.toLowerCase() === "ar" ? "rtl" : "ltr",
@@ -112,8 +121,8 @@ const holdingAnswer = computed(
 )
 
 const openIndex = computed(() => {
-  if (props.step === null || props.complete) return -1
-  if (holdingAnswer.value) return -1
+  if (props.step === null || props.complete || revealedRows.value) return -1
+  if (holdingAnswer.value || countdownIndex.value !== null) return -1
   return props.figured.length
 })
 
@@ -122,52 +131,87 @@ const typedAnswer = computed(() =>
 )
 
 const stepEditIndex = computed(() => {
-  if (!editingStep.value || props.step === null) return -1
+  if (!editingStep.value || props.step === null || revealedRows.value) return -1
   if (props.complete || props.figured.length >= COUNT_LENGTH) return 0
   return props.figured.length
 })
 
-const visibleCopies = computed(() => {
-  if (props.step === null) return 1
-  const active = openIndex.value >= 0 ? openIndex.value + 1 : 0
-  return Math.min(COUNT_LENGTH, Math.max(props.figured.length, active, 1))
+const playK = computed(() => {
+  if (countdownIndex.value !== null) return countdownIndex.value + 1
+  if (openIndex.value >= 0) return openIndex.value + 1
+  if (props.justLockedIndex !== null) return props.justLockedIndex + 1
+  return Math.max(1, props.figured.length)
 })
 
-function showsSteps(index: number) {
-  return index < props.figured.length || index === openIndex.value
+function fitCopies(
+  count: number,
+  parts: number[],
+  along: number,
+  cross: number,
+) {
+  if (count < 1 || along <= 0 || cross <= 0) return 1
+  const { wide, tall } = figureUnits(parts.length > 0 ? parts : [1])
+  const gap = COPY_GAP * Math.max(0, count - 1)
+  const px = Math.min(
+    cross / Math.max(tall, 0.01),
+    along / (wide * count + gap),
+  )
+  return px * COSTUME_PAD
 }
 
-const stepPx = computed(() => {
+const stagePx = computed(() => {
   if (props.step === null) return 1
-  return rowScale({
-    figures: Array.from({ length: visibleCopies.value }, () =>
-      partsFor(props.step as number),
-    ),
-    availableWidth: stepsWidth.value,
-    availableHeight: rowInner.value,
-  })
+  return fitCopies(
+    playK.value,
+    partsFor(props.step),
+    stageWidth.value,
+    stageHeight.value,
+  )
 })
 
-const stepBox = computed(() => {
+const stageBox = computed(() => {
   if (props.step === null) return { width: "0px", height: "0px" }
-  const size = displaySizeForParts(partsFor(props.step), stepPx.value)
+  const size = displaySizeForParts(partsFor(props.step), stagePx.value)
+  return { width: `${size.width}px`, height: `${size.height}px` }
+})
+
+const rowPx = computed(() => {
+  if (props.step === null) return 1
+  return fitCopies(
+    COUNT_LENGTH,
+    partsFor(props.step),
+    stepsWidth.value,
+    stepsHeight.value,
+  )
+})
+
+const rowBox = computed(() => {
+  if (props.step === null) return { width: "0px", height: "0px" }
+  const size = displaySizeForParts(partsFor(props.step), rowPx.value)
   return { width: `${size.width}px`, height: `${size.height}px` }
 })
 
 function resultScale(value: number) {
-  return (
-    rowScale({
-      figures: [partsFor(value)],
-      availableWidth: resultWidth.value,
-      availableHeight: rowInner.value,
-    }) * 0.92
-  )
+  const fit = fitCopies(1, partsFor(value), resultWidth.value, resultHeight.value)
+  return Math.min(rowPx.value, fit)
 }
 
 function resultBox(value: number) {
   const size = displaySizeForParts(partsFor(value), resultScale(value))
   return { width: `${size.width}px`, height: `${size.height}px` }
 }
+
+const passPx = computed(() => {
+  if (passingK.value === null) return 1
+  const { tall } = figureUnits(partsFor(passingK.value))
+  return (stageHeight.value * 0.72) / Math.max(tall, 1)
+})
+
+const passBox = computed(() => {
+  if (passingK.value === null) return { width: "0px", height: "0px" }
+  const size = displaySizeForParts(partsFor(passingK.value), passPx.value)
+  return { width: `${size.width}px`, height: `${size.height}px` }
+})
 
 const bubbleActive = computed(
   () =>
@@ -186,28 +230,118 @@ function sleep(ms: number) {
   })
 }
 
-function stillLock(gen: number) {
-  return gen === lockGen
+function clearMotionVisuals() {
+  passingK.value = null
+  passOn.value = false
+  countdownIndex.value = null
+  speakingPart.value = null
+  speakingIndex.value = null
+}
+
+function stopMotion() {
+  motion.onReset()
+  clearMotionVisuals()
+  cancelSpeech()
+  numberblocksAssets.stopAllSounds()
+}
+
+function onMotionEvent(event: AnimationUiEvent) {
+  if (event.type === "setEnd" && event.reason === "cancelled") {
+    clearMotionVisuals()
+    cancelSpeech()
+    numberblocksAssets.stopAllSounds()
+  }
+}
+
+const loopHost: TimesLoopHost = {
+  getStep: () => props.step,
+  getK: () => motionData.k,
+  getLockIndex: () => motionData.index,
+  isComplete: () => props.complete,
+  isRevealed: () => revealedRows.value,
+  getActiveField: () => props.activeField,
+  getJustLockedIndex: () => props.justLockedIndex,
+  setPassingK: (value) => {
+    passingK.value = value
+  },
+  setPassOn: (value) => {
+    passOn.value = value
+  },
+  setSpeakingIndex: (value) => {
+    speakingIndex.value = value
+  },
+  setSpeakingPart: (value) => {
+    speakingPart.value = value
+  },
+  setCountdownIndex: (value) => {
+    countdownIndex.value = value
+  },
+  setShakeBox: (value) => {
+    shakeBox.value = value
+  },
+  setHoldReleased: (value) => {
+    holdReleased.value = value
+  },
+  setRevealedRows: (value) => {
+    revealedRows.value = value
+  },
+  releaseAnswer,
+  focusProduct: () => {
+    emit("focusProduct")
+    productInput.value?.focus()
+  },
+  measure: () => {
+    measure()
+    observe()
+  },
+  nextTick,
+  prefersReducedMotion,
+}
+
+const motion = createTimesMotion({
+  passMs: PASS_MS,
+  speechPauseMs: SPEECH_PAUSE_MS,
+  sleep,
+  emit: onMotionEvent,
+  sets: createTimesCountSets(loopHost, {
+    passMs: PASS_MS,
+    speechPauseMs: SPEECH_PAUSE_MS,
+  }),
+})
+
+function innerBox(el: HTMLElement) {
+  const style = getComputedStyle(el)
+  const padX = parseFloat(style.paddingLeft || "0") + parseFloat(style.paddingRight || "0")
+  const padY = parseFloat(style.paddingTop || "0") + parseFloat(style.paddingBottom || "0")
+  return {
+    w: Math.max(24, el.clientWidth - padX),
+    h: Math.max(24, el.clientHeight - padY),
+  }
 }
 
 function measure() {
-  const list = listEl.value
-  if (list) {
-    const style = getComputedStyle(list)
-    const gap = parseFloat(style.rowGap || style.gap || "0") || 0
-    rowInner.value = Math.max(
-      36,
-      (list.clientHeight - gap * (COUNT_LENGTH - 1)) / COUNT_LENGTH - 2,
-    )
+  if (stageEl.value) {
+    const box = innerBox(stageEl.value)
+    stageWidth.value = box.w
+    stageHeight.value = box.h
   }
-  if (stepsEl.value) stepsWidth.value = Math.max(48, stepsEl.value.clientWidth - 4)
-  if (resultEl.value) resultWidth.value = Math.max(36, resultEl.value.clientWidth - 4)
+  if (stepsEl.value) {
+    const box = innerBox(stepsEl.value)
+    stepsWidth.value = box.w
+    stepsHeight.value = box.h
+  }
+  if (resultEl.value) {
+    const box = innerBox(resultEl.value)
+    resultWidth.value = box.w
+    resultHeight.value = box.h
+  }
 }
 
 function observe() {
   resize?.disconnect()
   resize = new ResizeObserver(measure)
   if (root.value) resize.observe(root.value)
+  if (stageEl.value) resize.observe(stageEl.value)
   if (listEl.value) resize.observe(listEl.value)
   if (stepsEl.value) resize.observe(stepsEl.value)
   if (resultEl.value) resize.observe(resultEl.value)
@@ -241,80 +375,6 @@ function setProductInput(el: unknown) {
   else if (el == null) productInput.value = null
 }
 
-function stopSpeech() {
-  lockGen += 1
-  speakingPart.value = null
-  speakingIndex.value = null
-  cancelSpeech()
-  numberblocksAssets.stopAllSounds()
-}
-
-async function playNamed(value: number) {
-  await speakNumberName(value)
-}
-
-async function speakFact(k: number, gen: number) {
-  const step = props.step
-  if (step === null) return
-
-  cancelSpeech()
-  numberblocksAssets.stopAllSounds()
-
-  const parts = [
-    { key: "k" as const, run: () => playNamed(k) },
-    { key: "times" as const, run: () => speakOperator("times") },
-    { key: "step" as const, run: () => playNamed(step) },
-    { key: "equals" as const, run: () => speakOperator("equals") },
-    { key: "product" as const, run: () => playNamed(multiple(step, k)) },
-  ]
-
-  for (let i = 0; i < parts.length; i++) {
-    const part = parts[i]
-    if (!part) continue
-    speakingPart.value = part.key
-    await part.run()
-    if (!stillLock(gen)) return
-    if (i < parts.length - 1) {
-      await sleep(SPEECH_PAUSE_MS)
-      if (!stillLock(gen)) return
-    }
-  }
-
-  speakingPart.value = null
-}
-
-async function promptNextInput() {
-  if (props.step === null || props.complete || props.activeField === "step") return
-  if (props.justLockedIndex !== null) releaseAnswer()
-  emit("focusProduct")
-  await nextTick()
-  productInput.value?.focus()
-  if (prefersReducedMotion()) return
-  shakeBox.value = false
-  await nextTick()
-  shakeBox.value = true
-}
-
-async function celebrateLock(index: number) {
-  const gen = ++lockGen
-  const step = props.step
-  if (step === null) return
-  speakingIndex.value = index
-  speakingPart.value = null
-  shakeBox.value = false
-  holdReleased.value = false
-  void numberblocksAssets.playSound("pop")
-
-  await speakFact(index + 1, gen)
-  if (!stillLock(gen)) return
-
-  speakingIndex.value = null
-  releaseAnswer()
-  await nextTick()
-  if (!stillLock(gen)) return
-  if (!props.complete) await promptNextInput()
-}
-
 function slotLabel(k: number) {
   if (props.step === null) return chooseStepText.value
   return `${k} times ${props.step}`
@@ -324,11 +384,6 @@ function rowLabel(k: number, product: number, solved: boolean) {
   if (props.step === null) return ""
   if (!solved) return `${k} times ${props.step}`
   return `${k} times ${props.step} equals ${product}`
-}
-
-function startGame() {
-  if (!canStart.value) return
-  emit("commitStep")
 }
 
 function onBoardPointerDown(event: PointerEvent) {
@@ -354,24 +409,40 @@ watch(
   () => props.justLockedIndex,
   (index) => {
     if (index === null) {
-      stopSpeech()
+      stopMotion()
       shakeBox.value = false
       holdReleased.value = false
-      void promptNextInput()
+      if (!props.complete) revealedRows.value = false
+      if (props.step !== null && !props.complete && !revealedRows.value) {
+        motionData = {}
+        void motion.system.play("times.promptNext")
+      }
       return
     }
-    void celebrateLock(index)
+    motionData = { index }
+    void motion.onLockSuccess({ index, complete: props.complete })
   },
 )
 
 watch(
   () => props.step,
   () => {
+    stopMotion()
+    revealedRows.value = false
+    countdownIndex.value = null
     if (props.justLockedIndex !== null) return
-    void promptNextInput()
+    if (props.step !== null && !props.complete) {
+      motionData = {}
+      void motion.system.play("times.promptNext")
+    }
   },
-  { immediate: true },
 )
+
+watch(openIndex, (index) => {
+  if (index < 0 || props.step === null || revealedRows.value) return
+  motionData = { k: index + 1 }
+  void motion.onOpenEquation(index + 1)
+})
 
 watch(
   () => props.activeField,
@@ -388,12 +459,12 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
-  stopSpeech()
+  stopMotion()
   resize?.disconnect()
 })
 
 watch(
-  () => props.figured.length,
+  () => [props.step, revealedRows.value, playK.value] as const,
   async () => {
     await nextTick()
     observe()
@@ -430,18 +501,6 @@ watch(
             @blur="emit('commitStep')"
           />
         </div>
-        <button
-          type="button"
-          class="start-step"
-          data-step-well
-          :lang="setupLang"
-          :dir="setupDir"
-          :disabled="!canStart"
-          @mousedown.prevent
-          @click="startGame"
-        >
-          {{ startText }}
-        </button>
       </div>
       <p
         class="setup-hint"
@@ -450,24 +509,24 @@ watch(
         :dir="setupDir"
         @mousedown.prevent
       >
-        {{ orEnterText }}
+        {{ pressEnterText }}
       </p>
     </div>
 
-    <ol v-else ref="listEl" class="list">
-      <li
-        v-for="row in rows"
-        :key="row.k"
-        class="line"
-        :class="{
-          current: row.index === openIndex,
-          solved: row.solved,
-          speaking: speakingIndex === row.index,
-        }"
-        :aria-current="row.index === openIndex ? 'step' : undefined"
-        :aria-label="rowLabel(row.k, row.product, row.solved)"
-      >
-        <div class="eq">
+    <div v-else-if="!revealedRows" class="play">
+      <div class="tabs" role="tablist" aria-label="Equations">
+        <div
+          v-for="row in rows"
+          :key="row.k"
+          class="tab"
+          role="tab"
+          :aria-selected="row.index === openIndex"
+          :class="{
+            current: row.index === openIndex,
+            solved: row.solved,
+            speaking: speakingIndex === row.index,
+          }"
+        >
           <span
             class="num"
             :class="[paintClass(row.k), { spoken: spoken(row.index, 'k') }]"
@@ -494,71 +553,99 @@ watch(
             >
               <span
                 class="num"
-                :class="[
-                  paintClass(step ?? 0),
-                  { spoken: spoken(row.index, 'step') },
-                ]"
+                :class="[paintClass(step ?? 0), { spoken: spoken(row.index, 'step') }]"
                 :style="paintStyle(step)"
                 >{{ step }}</span
               >
             </button>
           </div>
-          <span class="op" :class="{ spoken: spoken(row.index, 'equals') }">=</span>
-          <div class="answer">
-            <MathInput
-              v-if="row.index === openIndex"
-              :ref="setProductInput"
-              :value="typedAnswer"
-              :active="bubbleActive"
-              :shake="shakeBox"
-              :slot-label="slotLabel(row.k)"
-              @focus="onProductFocus"
-            />
-            <span
-              v-else-if="row.solved && row.answer !== null"
-              class="settled"
-              :class="paintClass(row.answer)"
-              :style="{
-                ...paintStyle(row.answer),
-                '--glow': glowFor(row.answer) ?? '#c4a57a',
-              }"
-              >{{ row.answer }}</span
-            >
-            <span v-else class="ghost" aria-hidden="true" />
-          </div>
+          <template v-if="row.index === openIndex || row.solved">
+            <span class="op" :class="{ spoken: spoken(row.index, 'equals') }">=</span>
+            <div class="answer">
+              <MathInput
+                v-if="row.index === openIndex"
+                :ref="setProductInput"
+                :value="typedAnswer"
+                :active="bubbleActive"
+                :shake="shakeBox"
+                :slot-label="slotLabel(row.k)"
+                @focus="onProductFocus"
+              />
+              <span
+                v-else-if="row.answer !== null"
+                class="settled"
+                :class="paintClass(row.answer)"
+                :style="{
+                  ...paintStyle(row.answer),
+                  '--glow': glowFor(row.answer) ?? '#c4a57a',
+                }"
+                >{{ row.answer }}</span
+              >
+            </div>
+          </template>
         </div>
+      </div>
 
-        <div
-          class="steps"
-          :ref="row.index === 0 ? setStepsEl : undefined"
-        >
+      <div ref="stageEl" class="stage">
+        <div class="copies" :aria-label="slotLabel(playK)">
           <div
-            v-for="n in showsSteps(row.index) ? row.k : 0"
+            v-for="n in playK"
             :key="n"
             class="fig"
-            :style="stepBox"
+            :style="stageBox"
           >
             <NumberblockView
               :value="step"
-              :px-per-unit="stepPx"
-              :speaking="spoken(row.index, 'step')"
+              :px-per-unit="stagePx"
+              :speaking="speakingPart === 'step' || speakingPart === 'product'"
             />
           </div>
         </div>
+        <div v-if="passingK !== null" class="pass" aria-hidden="true">
+          <div class="pass-fig" :class="{ go: passOn }" :style="passBox">
+            <NumberblockView :value="passingK" :px-per-unit="passPx" jumping />
+          </div>
+        </div>
+      </div>
+    </div>
 
-        <div
-          class="result"
-          :ref="row.index === 0 ? setResultEl : undefined"
-        >
-          <div
-            v-if="row.solved"
-            class="fig result-fig"
-            :style="resultBox(row.product)"
+    <ol v-else ref="listEl" class="list">
+      <li
+        v-for="row in rows"
+        :key="row.k"
+        class="line"
+        :aria-label="rowLabel(row.k, row.product, row.solved)"
+      >
+        <div class="eq">
+          <span class="num" :class="paintClass(row.k)" :style="paintStyle(row.k)">{{
+            row.k
+          }}</span>
+          <span class="op">×</span>
+          <span class="num" :class="paintClass(step)" :style="paintStyle(step)">{{
+            step
+          }}</span>
+          <span class="op">=</span>
+          <span
+            v-if="row.answer !== null"
+            class="settled"
+            :class="paintClass(row.answer)"
+            :style="{
+              ...paintStyle(row.answer),
+              '--glow': glowFor(row.answer) ?? '#c4a57a',
+            }"
+            >{{ row.answer }}</span
           >
+        </div>
+        <div class="steps" :ref="row.index === 0 ? setStepsEl : undefined">
+          <div v-for="n in row.k" :key="n" class="fig" :style="rowBox">
+            <NumberblockView :value="step" :px-per-unit="rowPx" />
+          </div>
+        </div>
+        <div class="result" :ref="row.index === 0 ? setResultEl : undefined">
+          <div v-if="row.solved" class="fig" :style="resultBox(row.product)">
             <NumberblockView
               :value="row.product"
               :px-per-unit="resultScale(row.product)"
-              :speaking="spoken(row.index, 'product')"
             />
           </div>
         </div>
@@ -622,83 +709,64 @@ watch(
   border-radius: 1.2rem;
 }
 
-.start-step {
-  appearance: none;
-  margin: 0;
-  border: 0;
-  border-radius: 1.2rem;
-  min-height: 4.2rem;
-  padding: 0.35rem 1.15rem;
-  background: #3aa8e0;
-  color: #fff;
-  font: inherit;
-  font-size: clamp(1.35rem, 3vw, 1.7rem);
-  font-weight: 800;
-  line-height: 1;
-  cursor: pointer;
-  box-shadow: 0 8px 18px rgba(40, 90, 130, 0.18);
-}
-
-.start-step:disabled {
-  background: #e4ddd2;
-  color: #9a9288;
-  box-shadow: none;
-  cursor: default;
-}
-
-.start-step:focus-visible,
 .step-keep:focus-visible {
   outline: 3px solid #4a5568;
   outline-offset: 3px;
 }
 
-.list {
+.play {
   flex: 1 1 auto;
   display: flex;
   flex-direction: column;
-  gap: 0.12rem;
-  width: 100%;
   min-width: 0;
   min-height: 0;
-  margin: 0;
-  padding: 0.15rem 0.2rem 0.3rem;
-  list-style: none;
 }
 
-.line {
-  flex: 1 1 0;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) minmax(2.4rem, 14vw);
-  align-items: center;
-  gap: 0.35rem 0.7rem;
-  min-width: 0;
-  min-height: 0;
-  padding: 0 0.35rem;
-  border-radius: 0.75rem;
+.tabs {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: flex-end;
+  gap: 0.18rem;
+  margin: 0 0.15rem;
+  padding: 0.15rem 0.15rem 0;
+  overflow: hidden;
+  border-bottom: 3px solid rgba(255, 255, 255, 0.72);
 }
 
-.line.current {
-  background: rgba(255, 255, 255, 0.45);
-  box-shadow: inset 0 0 0 2px rgba(58, 168, 224, 0.35);
-}
-
-.line.speaking {
-  background: rgba(255, 255, 255, 0.62);
-}
-
-.eq {
+.tab {
   display: flex;
   align-items: center;
-  gap: 0.18rem 0.28rem;
+  justify-content: center;
+  gap: 0.08rem 0.12rem;
+  flex: 1 1 0;
   min-width: 0;
-  height: 100%;
-  white-space: nowrap;
+  min-height: 2.7rem;
+  padding: 0.28rem 0.2rem 0.34rem;
+  border-radius: 0.75rem 0.75rem 0 0;
+  background: rgba(255, 255, 255, 0.34);
+  color: #6a645c;
+}
+
+.tab.solved {
+  background: rgba(255, 255, 255, 0.62);
+  color: inherit;
+}
+
+.tab.current {
+  background: #fff;
+  margin-bottom: -3px;
+  padding-bottom: calc(0.34rem + 3px);
+  box-shadow: inset 0 0 0 2px rgba(58, 168, 224, 0.4);
+}
+
+.tab.speaking {
+  background: #fff;
 }
 
 .num,
 .op,
 .step-keep {
-  font-size: clamp(1.05rem, 3.3vh, 1.7rem);
+  font-size: clamp(0.95rem, 2.1vw, 1.35rem);
   font-weight: 800;
   line-height: 1;
   font-variant-numeric: tabular-nums;
@@ -709,21 +777,20 @@ watch(
 }
 
 .num.spoken,
-.op.spoken,
-.step-keep .spoken {
+.op.spoken {
   transform: scale(1.12);
 }
 
-.step-slot {
+.step-slot,
+.answer {
   display: flex;
   align-items: center;
-  height: 100%;
 }
 
 .step-keep {
   appearance: none;
   margin: 0;
-  padding: 0 0.08em;
+  padding: 0 0.04em;
   border: 0;
   background: transparent;
   color: inherit;
@@ -731,101 +798,177 @@ watch(
   cursor: pointer;
 }
 
-.answer {
-  display: flex;
-  align-items: center;
-  height: 100%;
-  margin-left: 0.12rem;
-}
-
-.answer :deep(.slot),
-.step-slot :deep(.slot),
-.settled,
-.ghost {
-  --min: 1.6em;
-  width: 2.35em;
-  max-width: 3.4em;
-  height: 74%;
+.tab :deep(.slot),
+.tab .settled {
+  --min: 1.35em;
+  width: 1.7em;
+  max-width: 2.6em;
+  height: 1.55em;
   min-height: 0;
-  padding: 0 0.12em;
+  padding: 0 0.08em;
   border-width: 2px;
-  border-radius: 0.55em;
-  font-size: clamp(1.05rem, 3.3vh, 1.7rem);
+  border-radius: 0.45em;
+  font-size: clamp(0.95rem, 2.1vw, 1.35rem);
   box-shadow: 0 2px 0 rgba(40, 20, 0, 0.08);
 }
 
-.settled,
-.ghost {
+.tab .settled {
   display: flex;
   align-items: center;
   justify-content: center;
   box-sizing: border-box;
+  background: #fff;
   font-weight: 800;
   line-height: 1;
   font-variant-numeric: tabular-nums;
-}
-
-.settled {
-  background: #fff;
   box-shadow:
     0 2px 0 rgba(40, 20, 0, 0.08),
-    0 0 12px color-mix(in srgb, var(--glow) 55%, transparent);
+    0 0 10px color-mix(in srgb, var(--glow) 55%, transparent);
 }
 
-.ghost {
-  background: rgba(255, 255, 255, 0.28);
-  box-shadow: inset 0 0 0 1.5px rgba(40, 20, 0, 0.08);
-}
-
-.steps,
-.result {
+.stage {
+  position: relative;
+  flex: 1 1 auto;
   display: flex;
   align-items: center;
-  justify-content: flex-start;
+  justify-content: center;
   min-width: 0;
-  height: 100%;
+  min-height: 0;
+  padding: 0.8rem 1rem 1.1rem;
   overflow: hidden;
 }
 
-.result {
+.copies {
+  display: flex;
+  align-items: center;
   justify-content: center;
-}
-
-.steps {
-  gap: 0.18rem;
+  gap: 0.45rem;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
 }
 
 .fig {
-padding: 4px 0;
   flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: center;
-  animation: arrive 0.32s ease both;
 }
 
 .fig :deep(.nb) {
   align-items: center;
 }
 
-.result-fig {
-  animation-delay: 0.22s;
+.pass {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 3;
 }
 
-@keyframes arrive {
+.pass-fig {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transform: translate(-120%, -50%);
+}
+
+.pass-fig.go {
+  animation: cross 1.68s cubic-bezier(0.45, 0, 0.2, 1) forwards;
+}
+
+@keyframes cross {
   0% {
-    transform: translateY(6px) scale(0.86);
-    opacity: 0;
+    transform: translate(-115%, -50%) scale(0.9);
+  }
+  16% {
+    transform: translate(6%, -58%) scale(1);
+  }
+  72% {
+    transform: translate(62%, -50%) scale(1);
   }
   100% {
-    transform: translateY(0) scale(1);
-    opacity: 1;
+    transform: translate(125%, -50%) scale(0.92);
   }
+}
+
+.list {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+  padding: 0.2rem 0.25rem 0.4rem;
+  list-style: none;
+}
+
+.line {
+  flex: 1 1 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) minmax(4.2rem, 16vw);
+  align-items: center;
+  gap: 0.35rem 0.7rem;
+  min-width: 0;
+  min-height: 0;
+  padding: 0 0.4rem;
+  border-radius: 0.75rem;
+}
+
+.eq {
+  display: flex;
+  align-items: center;
+  gap: 0.16rem 0.22rem;
+  white-space: nowrap;
+}
+
+.list .settled {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 2.2em;
+  height: 1.6em;
+  border-radius: 0.45em;
+  background: #fff;
+  font-size: clamp(0.95rem, 2.4vh, 1.35rem);
+  font-weight: 800;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  box-shadow:
+    0 2px 0 rgba(40, 20, 0, 0.08),
+    0 0 10px color-mix(in srgb, var(--glow) 55%, transparent);
+}
+
+.steps,
+.result {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  height: 100%;
+  box-sizing: border-box;
+  padding: 0.3rem 0.25rem;
+  overflow: hidden;
+}
+
+.steps {
+  justify-content: flex-start;
+  gap: 0.2rem;
+}
+
+.result {
+  justify-content: center;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .result-fig,
-  .fig {
+  .pass-fig.go {
     animation: none;
   }
 }
@@ -833,7 +976,7 @@ padding: 4px 0;
 @media (max-width: 720px) {
   .line {
     gap: 0.2rem 0.35rem;
-    grid-template-columns: auto minmax(0, 1fr) minmax(2rem, 18vw);
+    grid-template-columns: auto minmax(0, 1fr) minmax(2.6rem, 18vw);
   }
 
   .setup-step :deep(.slot) {
@@ -841,12 +984,6 @@ padding: 4px 0;
     max-width: 6.4rem;
     min-height: 3.6rem;
     font-size: clamp(2rem, 6vw, 3rem);
-  }
-
-  .start-step {
-    min-height: 3.6rem;
-    padding: 0.3rem 0.85rem;
-    font-size: clamp(1.15rem, 3.4vw, 1.45rem);
   }
 }
 </style>
