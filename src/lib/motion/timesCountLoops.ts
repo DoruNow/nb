@@ -8,8 +8,12 @@ import {
 import type { AnimationContext, AnimationSetDef } from "./types"
 
 /** Same defaults as TimesCount.vue */
-export const TIMES_PASS_MS = 1680
+export const TIMES_PASS_MS = 2400
+/** Brief beat between costume exit and the big k numeral entering. */
+export const TIMES_K_NUMERAL_GAP_MS = 140
 export const TIMES_SPEECH_PAUSE_MS = 400
+/** How long the product costume stays in the right-side pass. */
+export const TIMES_RESULT_PASS_MS = 2000
 
 export type SpeakingPart = "k" | "times" | "step" | "equals" | "product"
 
@@ -28,6 +32,10 @@ export type TimesLoopHost = {
 
   setPassingK(value: number | null): void
   setPassOn(value: boolean): void
+  setPassingProduct(value: number | null): void
+  setProductPassOn(value: boolean): void
+  /** Large multiplier numeral that stays after the costume pass. */
+  setStageK(value: number | null): void
   setSpeakingIndex(value: number | null): void
   setSpeakingPart(value: SpeakingPart | null): void
   setCountdownIndex(value: number | null): void
@@ -50,6 +58,8 @@ export type TimesLoopHost = {
 export type TimesLoopOptions = {
   passMs?: number
   speechPauseMs?: number
+  resultPassMs?: number
+  kNumeralGapMs?: number
 }
 
 async function pause(ctx: AnimationContext, ms: number) {
@@ -76,15 +86,19 @@ export async function runTimesPass(
   ctx: AnimationContext,
   host: TimesLoopHost,
   passMs: number,
+  kNumeralGapMs: number = TIMES_K_NUMERAL_GAP_MS,
 ) {
   const k = host.getK()
   if (typeof k !== "number") return
+  host.setStageK(null)
   host.setPassOn(false)
   host.setPassingK(k)
   await host.nextTick()
   if (!ctx.still()) return
   if (host.prefersReducedMotion()) {
     host.setPassingK(null)
+    host.setPassOn(false)
+    host.setStageK(k)
     return
   }
   host.setPassOn(true)
@@ -92,12 +106,38 @@ export async function runTimesPass(
   if (!ctx.still()) return
   host.setPassingK(null)
   host.setPassOn(false)
+  await pause(ctx, kNumeralGapMs)
+  if (!ctx.still()) return
+  host.setStageK(k)
+}
+
+/** Product costume enters from the right while the answer is spoken. */
+export async function runTimesResultPass(
+  ctx: AnimationContext,
+  host: TimesLoopHost,
+  product: number,
+  resultPassMs: number,
+) {
+  host.setProductPassOn(false)
+  host.setPassingProduct(product)
+  await host.nextTick()
+  if (!ctx.still()) return
+  if (host.prefersReducedMotion()) {
+    host.setPassingProduct(null)
+    return
+  }
+  host.setProductPassOn(true)
+  await pause(ctx, resultPassMs)
+  if (!ctx.still()) return
+  host.setPassingProduct(null)
+  host.setProductPassOn(false)
 }
 
 export async function runTimesSpeakFact(
   ctx: AnimationContext,
   host: TimesLoopHost,
   speechPauseMs: number,
+  resultPassMs: number = TIMES_RESULT_PASS_MS,
 ) {
   const index = host.getLockIndex()
   const step = host.getStep()
@@ -107,6 +147,8 @@ export async function runTimesSpeakFact(
   host.setSpeakingPart(null)
   host.setShakeBox(false)
   host.setHoldReleased(false)
+  host.setPassingProduct(null)
+  host.setProductPassOn(false)
 
   if (!host.muteAudio) {
     void numberblocksAssets.playSound("pop")
@@ -115,6 +157,10 @@ export async function runTimesSpeakFact(
   }
 
   const k = index + 1
+  host.setPassingK(null)
+  host.setPassOn(false)
+  host.setStageK(k)
+  const product = multiple(step, k)
   const parts: Array<{ key: SpeakingPart; run: () => Promise<void> }> = [
     { key: "k", run: () => sayNumber(host, k, speechPauseMs) },
     { key: "times", run: () => sayOp(host, "times", speechPauseMs) },
@@ -122,7 +168,12 @@ export async function runTimesSpeakFact(
     { key: "equals", run: () => sayOp(host, "equals", speechPauseMs) },
     {
       key: "product",
-      run: () => sayNumber(host, multiple(step, k), speechPauseMs),
+      run: async () => {
+        await Promise.all([
+          sayNumber(host, product, speechPauseMs),
+          runTimesResultPass(ctx, host, product, resultPassMs),
+        ])
+      },
     },
   ]
 
@@ -141,12 +192,15 @@ export async function runTimesSpeakFact(
 
   host.setSpeakingPart(null)
   host.setSpeakingIndex(null)
+  host.setPassingProduct(null)
+  host.setProductPassOn(false)
 }
 
 export async function runTimesCountdown(
   ctx: AnimationContext,
   host: TimesLoopHost,
   speechPauseMs: number,
+  resultPassMs: number = TIMES_RESULT_PASS_MS,
 ) {
   const step = host.getStep()
   if (step === null) return
@@ -158,7 +212,11 @@ export async function runTimesCountdown(
     host.setSpeakingPart("product")
     await host.nextTick()
     host.measure()
-    await sayNumber(host, multiple(step, index + 1), speechPauseMs)
+    const product = multiple(step, index + 1)
+    await Promise.all([
+      sayNumber(host, product, speechPauseMs),
+      runTimesResultPass(ctx, host, product, resultPassMs),
+    ])
     if (!ctx.still()) return
     if (index < length - 1) {
       await pause(ctx, speechPauseMs)
@@ -168,6 +226,9 @@ export async function runTimesCountdown(
   host.setCountdownIndex(null)
   host.setSpeakingIndex(null)
   host.setSpeakingPart(null)
+  host.setPassingProduct(null)
+  host.setProductPassOn(false)
+  host.setStageK(null)
 }
 
 export async function runTimesPromptNext(
@@ -192,12 +253,15 @@ export async function runTimesSetFinale(
   ctx: AnimationContext,
   host: TimesLoopHost,
   speechPauseMs: number,
+  resultPassMs: number = TIMES_RESULT_PASS_MS,
 ) {
   if (host.getJustLockedIndex() !== null) host.releaseAnswer()
-  await runTimesCountdown(ctx, host, speechPauseMs)
+  await runTimesCountdown(ctx, host, speechPauseMs, resultPassMs)
   if (!ctx.still()) return
+  // Show the finished rows board and leave it up until the user clears.
   host.setRevealedRows(true)
   await host.nextTick()
+  if (!ctx.still()) return
   host.measure()
 }
 
@@ -208,19 +272,21 @@ export function createTimesCountSets(
 ): Record<string, AnimationSetDef> {
   const passMs = options.passMs ?? TIMES_PASS_MS
   const speechPauseMs = options.speechPauseMs ?? TIMES_SPEECH_PAUSE_MS
+  const resultPassMs = options.resultPassMs ?? TIMES_RESULT_PASS_MS
+  const kNumeralGapMs = options.kNumeralGapMs ?? TIMES_K_NUMERAL_GAP_MS
 
   return {
     "times.pass": {
       kind: "intro",
-      run: (ctx) => runTimesPass(ctx, host, passMs),
+      run: (ctx) => runTimesPass(ctx, host, passMs, kNumeralGapMs),
     },
     "times.equationSuccess": {
       kind: "celebration",
-      run: (ctx) => runTimesSpeakFact(ctx, host, speechPauseMs),
+      run: (ctx) => runTimesSpeakFact(ctx, host, speechPauseMs, resultPassMs),
     },
     "times.setFinale": {
       kind: "celebration",
-      run: (ctx) => runTimesSetFinale(ctx, host, speechPauseMs),
+      run: (ctx) => runTimesSetFinale(ctx, host, speechPauseMs, resultPassMs),
     },
     "times.promptNext": {
       kind: "prompt",

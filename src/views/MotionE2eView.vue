@@ -6,6 +6,7 @@ import MathInput from "../components/MathInput.vue"
 import { COUNT_LENGTH, multiple } from "../lib/math"
 import {
   TIMES_PASS_MS,
+  TIMES_RESULT_PASS_MS,
   TIMES_SPEECH_PAUSE_MS,
   createTimesCountSets,
   createTimesMotion,
@@ -31,6 +32,7 @@ type Conflict = "queue" | "replace"
 
 /** App defaults — change in UI, then Apply. */
 const passMs = ref(TIMES_PASS_MS)
+const resultPassMs = ref(TIMES_RESULT_PASS_MS)
 const speechPauseMs = ref(TIMES_SPEECH_PAUSE_MS)
 const onConflict = ref<Conflict>("queue")
 const speed = ref(2)
@@ -49,6 +51,9 @@ const loopProgress = ref("—")
 
 const passingK = ref<number | null>(null)
 const passOn = ref(false)
+const passingProduct = ref<number | null>(null)
+const productPassOn = ref(false)
+const stageK = ref<number | null>(null)
 const speakingIndex = ref<number | null>(null)
 const speakingPart = ref<SpeakingPart | null>(null)
 const countdownIndex = ref<number | null>(null)
@@ -134,6 +139,9 @@ function spoken(index: number, part: SpeakingPart) {
 function clearVisuals() {
   passingK.value = null
   passOn.value = false
+  passingProduct.value = null
+  productPassOn.value = false
+  stageK.value = null
   countdownIndex.value = null
   speakingPart.value = null
   speakingIndex.value = null
@@ -207,6 +215,15 @@ function buildHost(): TimesLoopHost {
     setPassOn: (value) => {
       passOn.value = value
     },
+    setPassingProduct: (value) => {
+      passingProduct.value = value
+    },
+    setProductPassOn: (value) => {
+      productPassOn.value = value
+    },
+    setStageK: (value) => {
+      stageK.value = value
+    },
     setSpeakingIndex: (value) => {
       speakingIndex.value = value
     },
@@ -263,10 +280,11 @@ function rebuild() {
     sets: createTimesCountSets(host, {
       passMs: passMs.value,
       speechPauseMs: speechPauseMs.value,
+      resultPassMs: resultPassMs.value,
     }),
   })
   logLine(
-    `rebuilt  step=${step.value} loops=${loopCount.value} passMs=${passMs.value} speechPauseMs=${speechPauseMs.value} speed=${speed.value} mute=${muteAudio.value}`,
+    `rebuilt  step=${step.value} loops=${loopCount.value} passMs=${passMs.value} resultPassMs=${resultPassMs.value} speechPauseMs=${speechPauseMs.value} speed=${speed.value} mute=${muteAudio.value}`,
   )
   refreshStatus()
 }
@@ -507,7 +525,7 @@ onUnmounted(() => {
           <input v-model="skipPassWait" type="checkbox" />
           <span>
             <span class="field-name">Interrupt pass (realistic)</span>
-            <span class="field-help">Like typing the answer during the fly-across: lock replaces the pass mid-flight.</span>
+            <span class="field-help">Like typing the answer during the peek: lock replaces the pass mid-flight.</span>
           </span>
         </label>
         <p class="progress">Progress: {{ loopProgress }}</p>
@@ -578,10 +596,40 @@ onUnmounted(() => {
           Revealed list after finale ({{ figured.length }} facts for step {{ step }}).
         </div>
         <div class="pass-area">
-          <div v-if="passingK !== null" class="pass-fig" :class="{ go: passOn }">
+          <div
+            v-if="passingK !== null"
+            class="pass-fig from-left"
+            :class="{ go: passOn }"
+          >
             <NumberblockView :value="passingK" :px-per-unit="18" jumping />
           </div>
-          <p v-else class="pass-idle">
+          <div
+            v-if="passingProduct !== null"
+            class="pass-fig from-right"
+            :class="{ go: productPassOn }"
+          >
+            <NumberblockView
+              :value="passingProduct"
+              :px-per-unit="18"
+              jumping
+              speaking
+            />
+          </div>
+          <div
+            v-else-if="stageK !== null && passingK === null"
+            class="k-numeral"
+            :class="[paintClass(stageK), { jiggle: speakingPart === 'k' }]"
+            :style="{
+              ...paintStyle(stageK),
+              '--glow': glowFor(stageK) ?? '#c4a57a',
+            }"
+          >
+            {{ stageK }}
+          </div>
+          <p
+            v-if="passingK === null && passingProduct === null && stageK === null"
+            class="pass-idle"
+          >
             playK={{ playK }} · phase {{ phaseLabel }}
           </p>
         </div>
@@ -599,10 +647,18 @@ onUnmounted(() => {
         <label>
           <span class="field-name">passMs</span>
           <span class="field-help">
-            How long the multiplier flies across the stage (<code>times.pass</code>).
+            How long the multiplier peeks in from the left (<code>times.pass</code>).
             App default {{ TIMES_PASS_MS }}.
           </span>
           <input v-model.number="passMs" type="number" min="0" step="50" />
+        </label>
+        <label>
+          <span class="field-name">resultPassMs</span>
+          <span class="field-help">
+            How long the product sweeps in from the right when the answer is spoken.
+            App default {{ TIMES_RESULT_PASS_MS }}.
+          </span>
+          <input v-model.number="resultPassMs" type="number" min="0" step="50" />
         </label>
         <label>
           <span class="field-name">speechPauseMs</span>
@@ -922,20 +978,130 @@ h1 {
 .pass-fig {
   position: absolute;
   top: 50%;
+}
+
+.pass-fig.from-left {
   left: 0;
   transform: translate(-120%, -50%);
 }
 
-.pass-fig.go {
-  animation: cross 1.2s cubic-bezier(0.45, 0, 0.2, 1) forwards;
+.pass-fig.from-right {
+  left: 100%;
+  transform: translate(20%, -50%);
 }
 
-@keyframes cross {
+.pass-fig.from-left.go {
+  animation: peek-left 2.4s cubic-bezier(0.45, 0, 0.2, 1) forwards;
+}
+
+.k-numeral {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  min-width: 0.9em;
+  padding: 0.08em 0.12em;
+  border-radius: 0.22em;
+  background: rgba(255, 255, 255, 0.82);
+  font-size: 3.2rem;
+  font-weight: 800;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  transform: translate(8%, -50%);
+  animation: k-enter 0.55s cubic-bezier(0.34, 1.15, 0.64, 1) both;
+  box-shadow:
+    0 4px 0 rgba(40, 20, 0, 0.1),
+    0 0 22px color-mix(in srgb, var(--glow) 55%, transparent);
+}
+
+.k-numeral.jiggle {
+  animation: k-jiggle 0.65s ease both;
+}
+
+.pass-fig.from-right.go {
+  animation: pass-right 2s cubic-bezier(0.4, 0.05, 0.2, 1) forwards;
+}
+
+@keyframes peek-left {
   0% {
-    transform: translate(-115%, -50%) scale(0.9);
+    transform: translate(-120%, -50%) scale(0.92);
+  }
+  16% {
+    transform: translate(10%, -54%) scale(1);
+  }
+  24% {
+    transform: translate(18%, -46%) scale(1.04);
+  }
+  32% {
+    transform: translate(4%, -53%) scale(0.97);
+  }
+  40% {
+    transform: translate(12%, -49%) scale(1.02);
+  }
+  48% {
+    transform: translate(8%, -50%) scale(1);
+  }
+  78% {
+    transform: translate(8%, -50%) scale(1);
   }
   100% {
-    transform: translate(125%, -50%) scale(0.92);
+    transform: translate(-120%, -50%) scale(0.92);
+  }
+}
+
+@keyframes k-enter {
+  0% {
+    transform: translate(-120%, -50%) scale(0.88);
+    opacity: 0.7;
+  }
+  100% {
+    transform: translate(8%, -50%) scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes k-jiggle {
+  0%,
+  100% {
+    transform: translate(8%, -50%) rotate(0deg) scale(1);
+  }
+  18% {
+    transform: translate(8%, -56%) rotate(-7deg) scale(1.08);
+  }
+  36% {
+    transform: translate(8%, -46%) rotate(6deg) scale(1.04);
+  }
+  54% {
+    transform: translate(8%, -54%) rotate(-4deg) scale(1.06);
+  }
+  72% {
+    transform: translate(8%, -48%) rotate(3deg) scale(1.02);
+  }
+}
+
+@keyframes pass-right {
+  0% {
+    left: 100%;
+    transform: translate(30%, -50%) scale(0.92);
+  }
+  22% {
+    left: 78%;
+    transform: translate(-50%, -54%) scale(1);
+  }
+  40% {
+    left: 55%;
+    transform: translate(-50%, -48%) scale(1.05);
+  }
+  55% {
+    left: 42%;
+    transform: translate(-50%, -52%) scale(0.98);
+  }
+  72% {
+    left: 22%;
+    transform: translate(-50%, -50%) scale(1);
+  }
+  100% {
+    left: 0%;
+    transform: translate(-120%, -50%) scale(0.92);
   }
 }
 
@@ -1147,7 +1313,10 @@ code {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .pass-fig.go {
+  .pass-fig.from-left.go,
+  .pass-fig.from-right.go,
+  .k-numeral,
+  .k-numeral.jiggle {
     animation: none;
   }
 }

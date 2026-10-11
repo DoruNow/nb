@@ -201,6 +201,8 @@ function onKeydown(event: KeyboardEvent) {
   if (mode.value === "times") {
     if (event.key === "Tab" || event.key === "Enter") {
       event.preventDefault()
+      // After the set is complete, stay on the rows board until Clear.
+      if (timesComplete.value) return
       if (timesActiveField.value === "step") timesCommitStep()
       else if (event.key === "Tab") timesFocusStep()
     }

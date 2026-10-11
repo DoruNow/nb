@@ -20,7 +20,7 @@ export type TimesMotion = {
   system: AnimationSystem
 }
 
-const DEFAULT_PASS_MS = 1680
+const DEFAULT_PASS_MS = 2400
 const DEFAULT_SPEECH_PAUSE_MS = 400
 
 type DataSlot = { current: Record<string, unknown> }

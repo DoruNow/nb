@@ -110,6 +110,12 @@ export function useTimesCount() {
   }
 
   function applyStepDigit(digit: number) {
+    // Finished set stays on the rows board until Clear.
+    if (complete.value) {
+      log("step blocked", { digit, reason: "complete" })
+      return
+    }
+
     if (digit === 0 && (replaceNext.value || stepDraft.value === null)) {
       log("step ignored leading 0", { digit })
       return
@@ -180,6 +186,10 @@ export function useTimesCount() {
   }
 
   function focusStep() {
+    if (complete.value) {
+      log("focusStep blocked", { reason: "complete" })
+      return
+    }
     if (activeField.value !== "step") {
       stepDraft.value = step.value
       replaceNext.value = true
@@ -188,6 +198,10 @@ export function useTimesCount() {
   }
 
   function commitStep() {
+    if (complete.value) {
+      log("commitStep blocked", { reason: "complete" })
+      return
+    }
     if (activeField.value !== "step") return
     const value = stepDraft.value
     if (value !== null && value >= 1 && value <= MAX_STEP) {
@@ -211,6 +225,10 @@ export function useTimesCount() {
   }
 
   function focusProduct() {
+    if (complete.value) {
+      log("focusProduct blocked", { reason: "complete" })
+      return
+    }
     if (activeField.value === "step") {
       commitStep()
       return

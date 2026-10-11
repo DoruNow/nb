@@ -3,6 +3,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue"
 import { COUNT_LENGTH, multiple } from "../lib/math"
 import {
   TIMES_PASS_MS,
+  TIMES_RESULT_PASS_MS,
   TIMES_SPEECH_PAUSE_MS,
   createTimesCountSets,
   createTimesMotion,
@@ -31,6 +32,7 @@ import NumberblockView from "./NumberblockView.vue"
 const COSTUME_PAD = 0.78
 const COPY_GAP = 0.4
 const PASS_MS = TIMES_PASS_MS
+const RESULT_PASS_MS = TIMES_RESULT_PASS_MS
 const SPEECH_PAUSE_MS = TIMES_SPEECH_PAUSE_MS
 
 const props = defineProps<{
@@ -77,6 +79,11 @@ const revealedRows = ref(false)
 const countdownIndex = ref<number | null>(null)
 const passingK = ref<number | null>(null)
 const passOn = ref(false)
+const passingProduct = ref<number | null>(null)
+const productPassOn = ref(false)
+/** Large k numeral that stays after the multiplier costume exits. */
+const stageK = ref<number | null>(null)
+const stageKSettled = ref(false)
 const speakingIndex = ref<number | null>(null)
 const speakingPart = ref<SpeakingPart | null>(null)
 
@@ -137,8 +144,14 @@ const typedAnswer = computed(() =>
 )
 
 const stepEditIndex = computed(() => {
-  if (!editingStep.value || props.step === null || revealedRows.value) return -1
-  if (props.complete || props.figured.length >= COUNT_LENGTH) return 0
+  if (
+    !editingStep.value ||
+    props.step === null ||
+    revealedRows.value ||
+    props.complete
+  ) {
+    return -1
+  }
   return props.figured.length
 })
 
@@ -187,7 +200,8 @@ const sharedPx = computed(() => {
         cellHeight: cell.height,
       })
     } else {
-      const cell = copyCell(playK.value, stageWidth.value, stageHeight.value)
+      // Always size as if all ten columns are on stage.
+      const cell = copyCell(COUNT_LENGTH, stageWidth.value, stageHeight.value)
       figures.push({
         value: props.step,
         parts: partsFor(props.step),
@@ -210,7 +224,15 @@ const sharedPx = computed(() => {
     figures.push({
       value: passingK.value,
       parts: partsFor(passingK.value),
-      cellWidth: stageWidth.value * 0.55,
+      cellWidth: stageWidth.value * 0.4,
+      cellHeight: stageHeight.value * 0.72,
+    })
+  }
+  if (passingProduct.value !== null) {
+    figures.push({
+      value: passingProduct.value,
+      parts: partsFor(passingProduct.value),
+      cellWidth: stageWidth.value * 0.4,
       cellHeight: stageHeight.value * 0.72,
     })
   }
@@ -221,7 +243,7 @@ const stagePx = computed(() => {
   if (props.step === null) return 1
   if (sharedPx.value !== null) return sharedPx.value
   return fitCopies(
-    playK.value,
+    COUNT_LENGTH,
     partsFor(props.step),
     stageWidth.value,
     stageHeight.value,
@@ -262,18 +284,25 @@ function resultBox(value: number) {
   return { width: `${size.width}px`, height: `${size.height}px` }
 }
 
-const passPx = computed(() => {
-  if (passingK.value === null) return 1
+function passScale(value: number | null) {
+  if (value === null) return 1
   if (sharedPx.value !== null) return sharedPx.value
-  const { tall } = figureUnits(partsFor(passingK.value))
-  return (stageHeight.value * 0.72) / Math.max(tall, 1)
-})
+  const { tall, wide } = figureUnits(partsFor(value))
+  const byHeight = (stageHeight.value * 0.72) / Math.max(tall, 1)
+  const byWidth = (stageWidth.value * 0.4) / Math.max(wide, 1)
+  return Math.min(byHeight, byWidth)
+}
 
-const passBox = computed(() => {
-  if (passingK.value === null) return { width: "0px", height: "0px" }
-  const size = displaySizeForParts(partsFor(passingK.value), passPx.value)
+function passBoxFor(value: number | null) {
+  if (value === null) return { width: "0px", height: "0px" }
+  const size = displaySizeForParts(partsFor(value), passScale(value))
   return { width: `${size.width}px`, height: `${size.height}px` }
-})
+}
+
+const passPx = computed(() => passScale(passingK.value))
+const passBox = computed(() => passBoxFor(passingK.value))
+const productPassPx = computed(() => passScale(passingProduct.value))
+const productPassBox = computed(() => passBoxFor(passingProduct.value))
 
 const bubbleActive = computed(
   () =>
@@ -295,6 +324,10 @@ function sleep(ms: number) {
 function clearMotionVisuals() {
   passingK.value = null
   passOn.value = false
+  passingProduct.value = null
+  productPassOn.value = false
+  stageK.value = null
+  stageKSettled.value = false
   countdownIndex.value = null
   speakingPart.value = null
   speakingIndex.value = null
@@ -328,6 +361,23 @@ const loopHost: TimesLoopHost = {
   },
   setPassOn: (value) => {
     passOn.value = value
+  },
+  setPassingProduct: (value) => {
+    passingProduct.value = value
+  },
+  setProductPassOn: (value) => {
+    productPassOn.value = value
+  },
+  setStageK: (value) => {
+    if (value === null) {
+      stageK.value = null
+      stageKSettled.value = false
+      return
+    }
+    if (value !== stageK.value) {
+      stageKSettled.value = false
+      stageK.value = value
+    }
   },
   setSpeakingIndex: (value) => {
     speakingIndex.value = value
@@ -368,6 +418,7 @@ const motion = createTimesMotion({
   sets: createTimesCountSets(loopHost, {
     passMs: PASS_MS,
     speechPauseMs: SPEECH_PAUSE_MS,
+    resultPassMs: RESULT_PASS_MS,
   }),
 })
 
@@ -449,11 +500,17 @@ function rowLabel(k: number, product: number, solved: boolean) {
 }
 
 function onBoardPointerDown(event: PointerEvent) {
+  if (props.complete || revealedRows.value) return
   if (!editingStep.value) return
   const target = event.target
   if (!(target instanceof Element)) return
   if (target.closest("[data-step-well]")) return
   emit("commitStep")
+}
+
+function onFocusStep() {
+  if (props.complete || revealedRows.value) return
+  emit("focusStep")
 }
 
 function onProductFocus() {
@@ -474,6 +531,7 @@ watch(
       stopMotion()
       shakeBox.value = false
       holdReleased.value = false
+      // Finished set keeps the rows board; Clear resets via the step watch.
       if (!props.complete) revealedRows.value = false
       if (props.step !== null && !props.complete && !revealedRows.value) {
         motionData = {}
@@ -490,8 +548,12 @@ watch(
   () => props.step,
   () => {
     stopMotion()
-    revealedRows.value = false
     countdownIndex.value = null
+    // Rows stay after the finale; only Clear (step null) or a new
+    // incomplete run should leave that board.
+    if (props.step === null || !props.complete) {
+      revealedRows.value = false
+    }
     if (props.justLockedIndex !== null) return
     if (props.step !== null && !props.complete) {
       motionData = {}
@@ -603,7 +665,7 @@ watch(
               :value="stepDraft"
               :active="activeField === 'step'"
               slot-label="Change step"
-              @focus="emit('focusStep')"
+              @focus="onFocusStep"
               @blur="emit('commitStep')"
             />
             <button
@@ -611,7 +673,8 @@ watch(
               type="button"
               class="step-keep"
               aria-label="Change step"
-              @click="emit('focusStep')"
+              :disabled="complete || revealedRows"
+              @click="onFocusStep"
             >
               <span
                 class="num"
@@ -659,13 +722,52 @@ watch(
             <NumberblockView
               :value="step"
               :px-per-unit="stagePx"
-              :speaking="speakingPart === 'step' || speakingPart === 'product'"
+              :speaking="speakingPart === 'step'"
             />
           </div>
         </div>
         <div v-if="passingK !== null" class="pass" aria-hidden="true">
-          <div class="pass-fig" :class="{ go: passOn }" :style="passBox">
+          <div class="pass-fig from-left" :class="{ go: passOn }" :style="passBox">
             <NumberblockView :value="passingK" :px-per-unit="passPx" jumping />
+          </div>
+        </div>
+        <div
+          v-else-if="stageK !== null"
+          class="pass"
+          aria-hidden="true"
+        >
+          <div
+            :key="stageK"
+            class="k-numeral"
+            :class="[
+              paintClass(stageK),
+              {
+                enter: !stageKSettled && speakingPart !== 'k',
+                settled: stageKSettled && speakingPart !== 'k',
+                jiggle: speakingPart === 'k',
+              },
+            ]"
+            :style="{
+              ...paintStyle(stageK),
+              '--glow': glowFor(stageK) ?? '#c4a57a',
+            }"
+            @animationend="stageKSettled = true"
+          >
+            {{ stageK }}
+          </div>
+        </div>
+        <div v-if="passingProduct !== null" class="pass" aria-hidden="true">
+          <div
+            class="pass-fig from-right"
+            :class="{ go: productPassOn }"
+            :style="productPassBox"
+          >
+            <NumberblockView
+              :value="passingProduct"
+              :px-per-unit="productPassPx"
+              jumping
+              speaking
+            />
           </div>
         </div>
       </div>
@@ -774,6 +876,10 @@ watch(
 .step-keep:focus-visible {
   outline: 3px solid #4a5568;
   outline-offset: 3px;
+}
+
+.step-keep:disabled {
+  cursor: default;
 }
 
 .play {
@@ -933,29 +1039,144 @@ watch(
 .pass-fig {
   position: absolute;
   top: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pass-fig.from-left {
+  left: 0;
+  transform: translate(-120%, -50%);
+}
+
+.pass-fig.from-right {
+  left: 100%;
+  transform: translate(20%, -50%);
+}
+
+.pass-fig.from-left.go {
+  animation: peek-left 2.4s cubic-bezier(0.45, 0, 0.2, 1) forwards;
+}
+
+.pass-fig.from-right.go {
+  animation: pass-right 2s cubic-bezier(0.4, 0.05, 0.2, 1) forwards;
+}
+
+.k-numeral {
+  position: absolute;
+  top: 50%;
   left: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  transform: translate(-120%, -50%);
+  min-width: 0.9em;
+  padding: 0.08em 0.12em;
+  border-radius: 0.22em;
+  background: rgba(255, 255, 255, 0.82);
+  font-size: clamp(3.6rem, 18vmin, 7.5rem);
+  font-weight: 800;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  transform: translate(8%, -50%);
+  box-shadow:
+    0 4px 0 rgba(40, 20, 0, 0.1),
+    0 0 22px color-mix(in srgb, var(--glow) 55%, transparent);
 }
 
-.pass-fig.go {
-  animation: cross 1.68s cubic-bezier(0.45, 0, 0.2, 1) forwards;
+.k-numeral.enter {
+  animation: k-enter 0.55s cubic-bezier(0.34, 1.15, 0.64, 1) both;
 }
 
-@keyframes cross {
+.k-numeral.settled {
+  transform: translate(8%, -50%);
+}
+
+.k-numeral.jiggle {
+  animation: k-jiggle 0.65s ease both;
+}
+
+@keyframes peek-left {
   0% {
-    transform: translate(-115%, -50%) scale(0.9);
+    transform: translate(-120%, -50%) scale(0.92);
   }
   16% {
-    transform: translate(6%, -58%) scale(1);
+    transform: translate(10%, -54%) scale(1);
   }
-  72% {
-    transform: translate(62%, -50%) scale(1);
+  24% {
+    transform: translate(18%, -46%) scale(1.04);
+  }
+  32% {
+    transform: translate(4%, -53%) scale(0.97);
+  }
+  40% {
+    transform: translate(12%, -49%) scale(1.02);
+  }
+  48% {
+    transform: translate(8%, -50%) scale(1);
+  }
+  78% {
+    transform: translate(8%, -50%) scale(1);
   }
   100% {
-    transform: translate(125%, -50%) scale(0.92);
+    transform: translate(-120%, -50%) scale(0.92);
+  }
+}
+
+@keyframes k-enter {
+  0% {
+    transform: translate(-120%, -50%) scale(0.88);
+    opacity: 0.7;
+  }
+  100% {
+    transform: translate(8%, -50%) scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes k-jiggle {
+  0%,
+  100% {
+    transform: translate(8%, -50%) rotate(0deg) scale(1);
+  }
+  18% {
+    transform: translate(8%, -56%) rotate(-7deg) scale(1.08);
+  }
+  36% {
+    transform: translate(8%, -46%) rotate(6deg) scale(1.04);
+  }
+  54% {
+    transform: translate(8%, -54%) rotate(-4deg) scale(1.06);
+  }
+  72% {
+    transform: translate(8%, -48%) rotate(3deg) scale(1.02);
+  }
+}
+
+/* left % is relative to the stage, so the costume can cross and exit fully. */
+@keyframes pass-right {
+  0% {
+    left: 100%;
+    transform: translate(30%, -50%) scale(0.92);
+  }
+  22% {
+    left: 78%;
+    transform: translate(-50%, -54%) scale(1);
+  }
+  40% {
+    left: 55%;
+    transform: translate(-50%, -48%) scale(1.05);
+  }
+  55% {
+    left: 42%;
+    transform: translate(-50%, -52%) scale(0.98);
+  }
+  72% {
+    left: 22%;
+    transform: translate(-50%, -50%) scale(1);
+  }
+  100% {
+    left: 0%;
+    transform: translate(-120%, -50%) scale(0.92);
   }
 }
 
@@ -1030,7 +1251,10 @@ watch(
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .pass-fig.go {
+  .pass-fig.from-left.go,
+  .pass-fig.from-right.go,
+  .k-numeral.enter,
+  .k-numeral.jiggle {
     animation: none;
   }
 }
