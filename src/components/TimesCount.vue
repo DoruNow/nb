@@ -2,18 +2,25 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue"
 import { COUNT_LENGTH, multiple } from "../lib/math"
 import {
+  TIMES_COMBINE_HOLD_MS,
+  TIMES_COMBINE_ROTATE_MS,
+  TIMES_COMBINE_SQUISH_MS,
+  TIMES_COPIES_ENTER_MS,
   TIMES_PASS_MS,
-  TIMES_RESULT_PASS_MS,
+  TIMES_PRODUCT_POP_MS,
   TIMES_SPEECH_PAUSE_MS,
   createTimesCountSets,
   createTimesMotion,
   type AnimationUiEvent,
+  type CopiesCombinePhase,
   type SpeakingPart,
   type TimesLoopHost,
 } from "../lib/motion"
 import {
+  blockUnits,
   displaySizeForParts,
   figureUnits,
+  layoutCopiesForProduct,
   pxPerUnitShared,
   type ScaleFigure,
 } from "../lib/numberblockScale"
@@ -30,9 +37,18 @@ import NumberblockView from "./NumberblockView.vue"
 
 /** Room around each costume so the sprite padding and shadow stay visible. */
 const COSTUME_PAD = 0.78
+/**
+ * When combining shapes, scale past SVG limb gutters so block faces meet.
+ * (Limbs are hidden; the viewBox still reserves space for them.)
+ */
+const SHAPE_TIGHT = 1.16
 const COPY_GAP = 0.4
 const PASS_MS = TIMES_PASS_MS
-const RESULT_PASS_MS = TIMES_RESULT_PASS_MS
+const COPIES_ENTER_MS = TIMES_COPIES_ENTER_MS
+const COMBINE_SQUISH_MS = TIMES_COMBINE_SQUISH_MS
+const COMBINE_ROTATE_MS = TIMES_COMBINE_ROTATE_MS
+const COMBINE_HOLD_MS = TIMES_COMBINE_HOLD_MS
+const PRODUCT_POP_MS = TIMES_PRODUCT_POP_MS
 const SPEECH_PAUSE_MS = TIMES_SPEECH_PAUSE_MS
 
 const props = defineProps<{
@@ -77,13 +93,13 @@ const shakeBox = ref(false)
 const holdReleased = ref(false)
 const revealedRows = ref(false)
 const countdownIndex = ref<number | null>(null)
-const passingK = ref<number | null>(null)
-const passOn = ref(false)
-const passingProduct = ref<number | null>(null)
-const productPassOn = ref(false)
-/** Large k numeral that stays after the multiplier costume exits. */
+/** Multiplier k in the factors band. */
 const stageK = ref<number | null>(null)
 const stageKSettled = ref(false)
+/** Product costume after copies combine (copies band). */
+const stageProduct = ref<number | null>(null)
+const stageProductSettled = ref(false)
+const copiesCombinePhase = ref<CopiesCombinePhase>(null)
 const speakingIndex = ref<number | null>(null)
 const speakingPart = ref<SpeakingPart | null>(null)
 
@@ -167,15 +183,17 @@ function fitCopies(
   parts: number[],
   along: number,
   cross: number,
+  pad = COSTUME_PAD,
+  gapUnits = COPY_GAP,
 ) {
   if (count < 1 || along <= 0 || cross <= 0) return 1
   const { wide, tall } = figureUnits(parts.length > 0 ? parts : [1])
-  const gap = COPY_GAP * Math.max(0, count - 1)
+  const gap = gapUnits * Math.max(0, count - 1)
   const px = Math.min(
     cross / Math.max(tall, 0.01),
     along / (wide * count + gap),
   )
-  return px * COSTUME_PAD
+  return px * pad
 }
 
 function copyCell(count: number, along: number, cross: number) {
@@ -186,6 +204,14 @@ function copyCell(count: number, along: number, cross: number) {
     height: Math.max(0, cross),
   }
 }
+
+/** Play stage is two equal bands (factors + copies) with a gap between. */
+const playBandGap = 12
+const playBandH = computed(() =>
+  Math.max(24, (stageHeight.value - playBandGap) / 2),
+)
+const factorCostumeH = computed(() => Math.max(24, playBandH.value * 0.62))
+const factorHalfW = computed(() => Math.max(24, stageWidth.value * 0.26))
 
 const sharedPx = computed(() => {
   if (!props.proportional) return null
@@ -200,13 +226,18 @@ const sharedPx = computed(() => {
         cellHeight: cell.height,
       })
     } else {
-      // Always size as if all ten columns are on stage.
-      const cell = copyCell(COUNT_LENGTH, stageWidth.value, stageHeight.value)
+      const cell = copyCell(COUNT_LENGTH, stageWidth.value, playBandH.value)
       figures.push({
         value: props.step,
         parts: partsFor(props.step),
         cellWidth: cell.width,
         cellHeight: cell.height,
+      })
+      figures.push({
+        value: props.step,
+        parts: partsFor(props.step),
+        cellWidth: factorHalfW.value,
+        cellHeight: factorCostumeH.value,
       })
     }
   }
@@ -220,20 +251,20 @@ const sharedPx = computed(() => {
       })
     }
   }
-  if (passingK.value !== null) {
+  if (stageK.value !== null) {
     figures.push({
-      value: passingK.value,
-      parts: partsFor(passingK.value),
-      cellWidth: stageWidth.value * 0.4,
-      cellHeight: stageHeight.value * 0.72,
+      value: stageK.value,
+      parts: partsFor(stageK.value),
+      cellWidth: factorHalfW.value,
+      cellHeight: factorCostumeH.value,
     })
   }
-  if (passingProduct.value !== null) {
+  if (stageProduct.value !== null) {
     figures.push({
-      value: passingProduct.value,
-      parts: partsFor(passingProduct.value),
-      cellWidth: stageWidth.value * 0.4,
-      cellHeight: stageHeight.value * 0.72,
+      value: stageProduct.value,
+      parts: partsFor(stageProduct.value),
+      cellWidth: stageWidth.value * 0.55,
+      cellHeight: playBandH.value * 0.9,
     })
   }
   return pxPerUnitShared({ figures })
@@ -246,14 +277,8 @@ const stagePx = computed(() => {
     COUNT_LENGTH,
     partsFor(props.step),
     stageWidth.value,
-    stageHeight.value,
+    playBandH.value,
   )
-})
-
-const stageBox = computed(() => {
-  if (props.step === null) return { width: "0px", height: "0px" }
-  const size = displaySizeForParts(partsFor(props.step), stagePx.value)
-  return { width: `${size.width}px`, height: `${size.height}px` }
 })
 
 const rowPx = computed(() => {
@@ -284,25 +309,167 @@ function resultBox(value: number) {
   return { width: `${size.width}px`, height: `${size.height}px` }
 }
 
-function passScale(value: number | null) {
+function factorScale(value: number | null) {
   if (value === null) return 1
   if (sharedPx.value !== null) return sharedPx.value
   const { tall, wide } = figureUnits(partsFor(value))
-  const byHeight = (stageHeight.value * 0.72) / Math.max(tall, 1)
-  const byWidth = (stageWidth.value * 0.4) / Math.max(wide, 1)
-  return Math.min(byHeight, byWidth)
+  const byHeight = factorCostumeH.value / Math.max(tall, 1)
+  const byWidth = factorHalfW.value / Math.max(wide, 1)
+  return Math.min(byHeight, byWidth) * COSTUME_PAD
 }
 
-function passBoxFor(value: number | null) {
+function factorBoxFor(value: number | null) {
   if (value === null) return { width: "0px", height: "0px" }
-  const size = displaySizeForParts(partsFor(value), passScale(value))
+  const size = displaySizeForParts(partsFor(value), factorScale(value))
   return { width: `${size.width}px`, height: `${size.height}px` }
 }
 
-const passPx = computed(() => passScale(passingK.value))
-const passBox = computed(() => passBoxFor(passingK.value))
-const productPassPx = computed(() => passScale(passingProduct.value))
-const productPassBox = computed(() => passBoxFor(passingProduct.value))
+const factorKPx = computed(() => factorScale(stageK.value))
+const factorKBox = computed(() => factorBoxFor(stageK.value))
+const factorStepPx = computed(() => factorScale(props.step))
+const factorStepBox = computed(() => factorBoxFor(props.step))
+
+function productScale(value: number | null) {
+  if (value === null) return 1
+  if (sharedPx.value !== null) return sharedPx.value
+  const { tall, wide } = figureUnits(partsFor(value))
+  const byHeight = (playBandH.value * 0.9) / Math.max(tall, 1)
+  const byWidth = (stageWidth.value * 0.55) / Math.max(wide, 1)
+  return Math.min(byHeight, byWidth) * COSTUME_PAD
+}
+
+const stageProductPx = computed(() => productScale(stageProduct.value))
+const stageProductBox = computed(() => {
+  if (stageProduct.value === null) return { width: "0px", height: "0px" }
+  const size = displaySizeForParts(
+    partsFor(stageProduct.value),
+    stageProductPx.value,
+  )
+  return { width: `${size.width}px`, height: `${size.height}px` }
+})
+
+const copiesLayout = computed(() => {
+  if (props.step === null) return { columns: 1, rows: 1, rotateDeg: 0 as const }
+  return layoutCopiesForProduct(props.step, playK.value)
+})
+
+const copiesCombining = computed(
+  () =>
+    copiesCombinePhase.value === "squish" ||
+    copiesCombinePhase.value === "rotate" ||
+    copiesCombinePhase.value === "hold",
+)
+
+const copiesEntering = computed(
+  () =>
+    speakingIndex.value !== null &&
+    speakingPart.value === "step" &&
+    !copiesCombining.value,
+)
+
+/** Off-screen until the step jiggle brings them in. */
+const showCopies = computed(() => {
+  if (props.step === null || stageProduct.value !== null) return false
+  if (copiesCombining.value) return true
+  if (speakingIndex.value !== null) {
+    return speakingPart.value === "step" || speakingPart.value === "equals"
+  }
+  return false
+})
+
+const copyPx = computed(() => {
+  if (props.step === null) return 1
+  if (!copiesCombining.value) return stagePx.value
+  if (sharedPx.value !== null) return sharedPx.value * (SHAPE_TIGHT / COSTUME_PAD)
+  return fitCopies(
+    playK.value,
+    partsFor(props.step),
+    stageWidth.value,
+    playBandH.value,
+    SHAPE_TIGHT,
+    0,
+  )
+})
+
+const copyBox = computed(() => {
+  if (props.step === null) return { width: "0px", height: "0px" }
+  const size = displaySizeForParts(partsFor(props.step), copyPx.value)
+  return { width: `${size.width}px`, height: `${size.height}px` }
+})
+
+const copiesFitScale = computed(() => {
+  if (!copiesCombining.value || props.step === null) return 1
+  const phase = copiesCombinePhase.value
+  const stepU = blockUnits(props.step)
+  const px = copyPx.value
+  let wide: number
+  let tall: number
+  if (phase === "squish") {
+    wide = stepU.wide * playK.value * px
+    tall = stepU.tall * px
+  } else {
+    const layout = copiesLayout.value
+    const cellW = layout.rotateDeg === 90 ? stepU.tall : stepU.wide
+    const cellH = layout.rotateDeg === 90 ? stepU.wide : stepU.tall
+    const pull = 0.78
+    wide = layout.columns * cellW * px * pull
+    tall = layout.rows * cellH * px * pull
+  }
+  const maxW = stageWidth.value * 0.96
+  const maxH = playBandH.value * 0.96
+  if (wide <= 0 || tall <= 0) return 1
+  return Math.min(1, maxW / wide, maxH / tall)
+})
+
+const copiesStyle = computed(() => {
+  const layout = copiesLayout.value
+  const phase = copiesCombinePhase.value
+  const squishMs = `${COMBINE_SQUISH_MS}ms`
+  const rotateMs = `${COMBINE_ROTATE_MS}ms`
+  const enterMs = `${COPIES_ENTER_MS}ms`
+  const fit = String(copiesFitScale.value)
+
+  if (phase === null || phase === "squish") {
+    return {
+      gap: phase === "squish" ? "0px" : "0.45rem",
+      gridTemplateColumns: `repeat(${playK.value}, auto)`,
+      gridTemplateRows: "auto",
+      "--copy-rotate": "0deg",
+      "--combine-ms": squishMs,
+      "--rotate-ms": rotateMs,
+      "--enter-ms": enterMs,
+      "--fit-scale": fit,
+    }
+  }
+
+  return {
+    gap: "0px",
+    gridTemplateColumns: `repeat(${layout.columns}, auto)`,
+    gridTemplateRows: `repeat(${layout.rows}, auto)`,
+    "--copy-rotate": `${layout.rotateDeg}deg`,
+    "--combine-ms": squishMs,
+    "--rotate-ms": rotateMs,
+    "--enter-ms": enterMs,
+    "--fit-scale": fit,
+  }
+})
+
+function copyEnterStyle(index: number) {
+  if (!copiesEntering.value || prefersReducedMotion()) return undefined
+  return {
+    animationDuration: `${COPIES_ENTER_MS}ms`,
+    animationDelay: `${index * 55}ms`,
+  }
+}
+
+const showProductInput = computed(() => openIndex.value >= 0)
+
+const equationProduct = computed(() => {
+  if (props.justLockedIndex !== null) {
+    return props.figured[props.justLockedIndex] ?? null
+  }
+  return null
+})
 
 const bubbleActive = computed(
   () =>
@@ -322,12 +489,11 @@ function sleep(ms: number) {
 }
 
 function clearMotionVisuals() {
-  passingK.value = null
-  passOn.value = false
-  passingProduct.value = null
-  productPassOn.value = false
   stageK.value = null
   stageKSettled.value = false
+  stageProduct.value = null
+  stageProductSettled.value = false
+  copiesCombinePhase.value = null
   countdownIndex.value = null
   speakingPart.value = null
   speakingIndex.value = null
@@ -356,18 +522,6 @@ const loopHost: TimesLoopHost = {
   isRevealed: () => revealedRows.value,
   getActiveField: () => props.activeField,
   getJustLockedIndex: () => props.justLockedIndex,
-  setPassingK: (value) => {
-    passingK.value = value
-  },
-  setPassOn: (value) => {
-    passOn.value = value
-  },
-  setPassingProduct: (value) => {
-    passingProduct.value = value
-  },
-  setProductPassOn: (value) => {
-    productPassOn.value = value
-  },
   setStageK: (value) => {
     if (value === null) {
       stageK.value = null
@@ -378,6 +532,20 @@ const loopHost: TimesLoopHost = {
       stageKSettled.value = false
       stageK.value = value
     }
+  },
+  setStageProduct: (value) => {
+    if (value === null) {
+      stageProduct.value = null
+      stageProductSettled.value = false
+      return
+    }
+    if (value !== stageProduct.value) {
+      stageProductSettled.value = false
+      stageProduct.value = value
+    }
+  },
+  setCopiesCombinePhase: (value) => {
+    copiesCombinePhase.value = value
   },
   setSpeakingIndex: (value) => {
     speakingIndex.value = value
@@ -416,9 +584,11 @@ const motion = createTimesMotion({
   sleep,
   emit: onMotionEvent,
   sets: createTimesCountSets(loopHost, {
-    passMs: PASS_MS,
     speechPauseMs: SPEECH_PAUSE_MS,
-    resultPassMs: RESULT_PASS_MS,
+    combineSquishMs: COMBINE_SQUISH_MS,
+    combineRotateMs: COMBINE_ROTATE_MS,
+    combineHoldMs: COMBINE_HOLD_MS,
+    productPopMs: PRODUCT_POP_MS,
   }),
 })
 
@@ -531,7 +701,6 @@ watch(
       stopMotion()
       shakeBox.value = false
       holdReleased.value = false
-      // Finished set keeps the rows board; Clear resets via the step watch.
       if (!props.complete) revealedRows.value = false
       if (props.step !== null && !props.complete && !revealedRows.value) {
         motionData = {}
@@ -549,8 +718,6 @@ watch(
   () => {
     stopMotion()
     countdownIndex.value = null
-    // Rows stay after the finale; only Clear (step null) or a new
-    // incomplete run should leave that board.
     if (props.step === null || !props.complete) {
       revealedRows.value = false
     }
@@ -638,15 +805,16 @@ watch(
     </div>
 
     <div v-else-if="!revealedRows" class="play">
-      <div class="tabs" role="tablist" aria-label="Equations">
+      <div class="progress" role="tablist" aria-label="Times scale">
         <div
           v-for="row in rows"
           :key="row.k"
-          class="tab"
+          class="tick"
           role="tab"
           :aria-selected="row.index === openIndex"
+          :aria-label="`${row.k} times ${step ?? ''}`"
           :class="{
-            current: row.index === openIndex,
+            current: row.index === openIndex || speakingIndex === row.index,
             solved: row.solved,
             speaking: speakingIndex === row.index,
           }"
@@ -657,117 +825,201 @@ watch(
             :style="paintStyle(row.k)"
             >{{ row.k }}</span
           >
-          <span class="op" :class="{ spoken: spoken(row.index, 'times') }">×</span>
-          <div class="step-slot" data-step-well>
-            <MathInput
-              v-if="row.index === stepEditIndex"
-              :ref="setStepInput"
-              :value="stepDraft"
-              :active="activeField === 'step'"
-              slot-label="Change step"
-              @focus="onFocusStep"
-              @blur="emit('commitStep')"
-            />
-            <button
-              v-else
-              type="button"
-              class="step-keep"
-              aria-label="Change step"
-              :disabled="complete || revealedRows"
-              @click="onFocusStep"
-            >
-              <span
-                class="num"
-                :class="[paintClass(step ?? 0), { spoken: spoken(row.index, 'step') }]"
-                :style="paintStyle(step)"
-                >{{ step }}</span
-              >
-            </button>
-          </div>
-          <template v-if="row.index === openIndex || row.solved">
-            <span class="op" :class="{ spoken: spoken(row.index, 'equals') }">=</span>
-            <div class="answer">
-              <MathInput
-                v-if="row.index === openIndex"
-                :ref="setProductInput"
-                :value="typedAnswer"
-                :active="bubbleActive"
-                :shake="shakeBox"
-                :slot-label="slotLabel(row.k)"
-                @focus="onProductFocus"
-              />
-              <span
-                v-else-if="row.answer !== null"
-                class="settled"
-                :class="paintClass(row.answer)"
-                :style="{
-                  ...paintStyle(row.answer),
-                  '--glow': glowFor(row.answer) ?? '#c4a57a',
-                }"
-                >{{ row.answer }}</span
-              >
-            </div>
-          </template>
         </div>
       </div>
 
       <div ref="stageEl" class="stage">
-        <div class="copies" :aria-label="slotLabel(playK)">
-          <div
-            v-for="n in playK"
-            :key="n"
-            class="fig"
-            :style="stageBox"
-          >
-            <NumberblockView
-              :value="step"
-              :px-per-unit="stagePx"
-              :speaking="speakingPart === 'step'"
-            />
+        <div class="play-stage">
+          <div class="factors">
+            <div class="factor-links">
+              <div class="factor-slot">
+                <div
+                  v-if="stageK !== null"
+                  :key="stageK"
+                  class="factor-link"
+                  :class="[
+                    paintClass(stageK),
+                    {
+                      enter: !stageKSettled && speakingPart !== 'k',
+                      settled: stageKSettled && speakingPart !== 'k',
+                      jiggle: speakingPart === 'k',
+                    },
+                  ]"
+                  :style="{
+                    ...paintStyle(stageK),
+                    '--glow': glowFor(stageK) ?? '#c4a57a',
+                  }"
+                  @animationend="stageKSettled = true"
+                >
+                  {{ stageK }}
+                </div>
+              </div>
+              <div class="factor-op-slot" aria-hidden="true" />
+              <div class="factor-slot" data-step-well>
+                <MathInput
+                  v-if="stepEditIndex >= 0"
+                  :ref="setStepInput"
+                  :value="stepDraft"
+                  :active="activeField === 'step'"
+                  slot-label="Change step"
+                  @focus="onFocusStep"
+                  @blur="emit('commitStep')"
+                />
+                <button
+                  v-else-if="step !== null"
+                  type="button"
+                  class="step-keep"
+                  aria-label="Change step"
+                  :disabled="complete || revealedRows"
+                  @click="onFocusStep"
+                >
+                  <div
+                    class="factor-link"
+                    :class="[
+                      paintClass(step),
+                      { jiggle: speakingPart === 'step' },
+                    ]"
+                    :style="{
+                      ...paintStyle(step),
+                      '--glow': glowFor(step) ?? '#c4a57a',
+                    }"
+                  >
+                    {{ step }}
+                  </div>
+                </button>
+              </div>
+              <div class="factor-op-slot" aria-hidden="true" />
+              <div class="factor-slot factor-answer-slot">
+                <span
+                  v-if="equationProduct !== null && !showProductInput"
+                  class="factor-link"
+                  :class="[
+                    paintClass(equationProduct),
+                    { jiggle: speakingPart === 'product' },
+                  ]"
+                  :style="{
+                    ...paintStyle(equationProduct),
+                    '--glow': glowFor(equationProduct) ?? '#c4a57a',
+                  }"
+                  >{{ equationProduct }}</span
+                >
+              </div>
+            </div>
+            <div class="factor-costumes">
+              <div class="factor-slot">
+                <div
+                  v-if="stageK !== null"
+                  class="fig factor-fig"
+                  :style="factorKBox"
+                >
+                  <NumberblockView
+                    :value="stageK"
+                    :px-per-unit="factorKPx"
+                    :speaking="speakingPart === 'k'"
+                  />
+                </div>
+              </div>
+              <div class="factor-op-slot">
+                <span
+                  class="factor-op"
+                  :class="{ spoken: speakingPart === 'times' }"
+                >×</span>
+              </div>
+              <div class="factor-slot">
+                <div
+                  v-if="step !== null"
+                  class="fig factor-fig"
+                  :style="factorStepBox"
+                >
+                  <NumberblockView
+                    :value="step"
+                    :px-per-unit="factorStepPx"
+                    :speaking="speakingPart === 'step'"
+                  />
+                </div>
+              </div>
+              <div class="factor-op-slot">
+                <span
+                  class="factor-op"
+                  :class="{ spoken: speakingPart === 'equals' }"
+                >=</span>
+              </div>
+              <div class="factor-slot factor-answer">
+                <MathInput
+                  v-if="showProductInput"
+                  :ref="setProductInput"
+                  :value="typedAnswer"
+                  :active="bubbleActive"
+                  :shake="shakeBox"
+                  :slot-label="slotLabel(playK)"
+                  @focus="onProductFocus"
+                />
+                <span
+                  v-else-if="equationProduct !== null"
+                  class="settled"
+                  :class="paintClass(equationProduct)"
+                  :style="{
+                    ...paintStyle(equationProduct),
+                    '--glow': glowFor(equationProduct) ?? '#c4a57a',
+                  }"
+                  >{{ equationProduct }}</span
+                >
+              </div>
+            </div>
           </div>
-        </div>
-        <div v-if="passingK !== null" class="pass" aria-hidden="true">
-          <div class="pass-fig from-left" :class="{ go: passOn }" :style="passBox">
-            <NumberblockView :value="passingK" :px-per-unit="passPx" jumping />
-          </div>
-        </div>
-        <div
-          v-else-if="stageK !== null"
-          class="pass"
-          aria-hidden="true"
-        >
+
           <div
-            :key="stageK"
-            class="k-numeral"
-            :class="[
-              paintClass(stageK),
-              {
-                enter: !stageKSettled && speakingPart !== 'k',
-                settled: stageKSettled && speakingPart !== 'k',
-                jiggle: speakingPart === 'k',
-              },
-            ]"
-            :style="{
-              ...paintStyle(stageK),
-              '--glow': glowFor(stageK) ?? '#c4a57a',
+            v-if="showCopies"
+            class="copies"
+            :class="{
+              shapes: copiesCombining,
+              squish: copiesCombinePhase === 'squish',
+              rotate: copiesCombinePhase === 'rotate',
+              hold: copiesCombinePhase === 'hold',
+              entering: copiesEntering,
             }"
-            @animationend="stageKSettled = true"
+            :style="copiesStyle"
+            :aria-label="slotLabel(playK)"
           >
-            {{ stageK }}
+            <div
+              v-for="n in playK"
+              :key="n"
+              class="fig copy-fig"
+              :class="{ enter: copiesEntering }"
+              :style="{ ...copyBox, ...copyEnterStyle(n - 1) }"
+            >
+              <NumberblockView
+                :value="step"
+                :px-per-unit="copyPx"
+                :speaking="speakingPart === 'step' && !copiesCombining"
+              />
+            </div>
           </div>
-        </div>
-        <div v-if="passingProduct !== null" class="pass" aria-hidden="true">
           <div
-            class="pass-fig from-right"
-            :class="{ go: productPassOn }"
-            :style="productPassBox"
+            v-else-if="stageProduct !== null"
+            class="product-result"
+            aria-hidden="true"
           >
-            <NumberblockView
-              :value="passingProduct"
-              :px-per-unit="productPassPx"
-              jumping
-              speaking
-            />
+            <div
+              :key="stageProduct"
+              class="fig product-fig"
+              :class="{
+                pop: !stageProductSettled,
+                settled: stageProductSettled,
+                speaking: speakingPart === 'product',
+              }"
+              :style="{
+                ...stageProductBox,
+                animationDuration: `${PRODUCT_POP_MS}ms`,
+              }"
+              @animationend="stageProductSettled = true"
+            >
+              <NumberblockView
+                :value="stageProduct"
+                :px-per-unit="stageProductPx"
+                :speaking="speakingPart === 'product'"
+              />
+            </div>
           </div>
         </div>
       </div>
@@ -890,75 +1142,73 @@ watch(
   min-height: 0;
 }
 
-.tabs {
+.progress {
   flex: 0 0 auto;
   display: flex;
   align-items: flex-end;
-  gap: 0.18rem;
+  gap: 0.2rem;
   margin: 0 0.15rem;
-  padding: 0.15rem 0.15rem 0;
+  padding: 0.2rem 0.2rem 0;
   overflow: hidden;
   border-bottom: 3px solid rgba(255, 255, 255, 0.72);
 }
 
-.tab {
+.tick {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 0.08rem 0.12rem;
   flex: 1 1 0;
   min-width: 0;
-  min-height: 2.7rem;
-  padding: 0.28rem 0.2rem 0.34rem;
-  border-radius: 0.75rem 0.75rem 0 0;
+  min-height: 2.1rem;
+  padding: 0.28rem 0.12rem 0.34rem;
+  border-radius: 0.65rem 0.65rem 0 0;
   background: rgba(255, 255, 255, 0.34);
   color: #6a645c;
 }
 
-.tab.solved {
+.tick.solved {
   background: rgba(255, 255, 255, 0.62);
   color: inherit;
 }
 
-.tab.current {
+.tick.current {
   background: #fff;
   margin-bottom: -3px;
   padding-bottom: calc(0.34rem + 3px);
   box-shadow: inset 0 0 0 2px rgba(58, 168, 224, 0.4);
 }
 
-.tab.speaking {
+.tick.speaking {
   background: #fff;
 }
 
 .num,
 .op,
-.step-keep {
-  font-size: clamp(0.95rem, 2.1vw, 1.35rem);
+.step-keep,
+.factor-op {
   font-weight: 800;
   line-height: 1;
   font-variant-numeric: tabular-nums;
 }
 
+.num {
+  font-size: clamp(0.95rem, 2.1vw, 1.35rem);
+}
+
 .op {
   color: #5a554e;
+  font-size: clamp(0.95rem, 2.1vw, 1.35rem);
 }
 
 .num.spoken,
-.op.spoken {
+.factor-op.spoken {
   transform: scale(1.12);
-}
-
-.step-slot,
-.answer {
-  display: flex;
-  align-items: center;
 }
 
 .step-keep {
   appearance: none;
   margin: 0;
-  padding: 0 0.04em;
+  padding: 0;
   border: 0;
   background: transparent;
   color: inherit;
@@ -966,21 +1216,135 @@ watch(
   cursor: pointer;
 }
 
-.tab :deep(.slot),
-.tab .settled {
-  --min: 1.35em;
-  width: 1.7em;
-  max-width: 2.6em;
-  height: 1.55em;
+.stage {
+  position: relative;
+  flex: 1 1 auto;
+  display: flex;
+  align-items: stretch;
+  justify-content: stretch;
+  min-width: 0;
   min-height: 0;
-  padding: 0 0.08em;
-  border-width: 2px;
-  border-radius: 0.45em;
-  font-size: clamp(0.95rem, 2.1vw, 1.35rem);
-  box-shadow: 0 2px 0 rgba(40, 20, 0, 0.08);
+  padding: 0.8rem 1rem 1.1rem;
+  overflow: hidden;
 }
 
-.tab .settled {
+.play-stage {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 0.75rem;
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+.factors {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 0.55rem;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.factor-links,
+.factor-costumes {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1.1fr);
+  align-items: center;
+  justify-items: center;
+  gap: 0.45rem 0.65rem;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+}
+
+.factor-costumes {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.factor-slot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+.factor-op-slot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.2em;
+}
+
+.factor-link {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0.9em;
+  padding: 0.08em 0.14em;
+  border-radius: 0.22em;
+  background: rgba(255, 255, 255, 0.82);
+  font-size: clamp(1.6rem, 6.5vmin, 3.2rem);
+  font-weight: 800;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  box-shadow:
+    0 3px 0 rgba(40, 20, 0, 0.1),
+    0 0 14px color-mix(in srgb, var(--glow) 55%, transparent);
+}
+
+.factor-link.enter {
+  animation: link-enter 0.4s cubic-bezier(0.34, 1.15, 0.64, 1) both;
+}
+
+.factor-link.jiggle {
+  animation: link-jiggle 0.5s ease both;
+}
+
+.factor-op {
+  color: #5a554e;
+  font-size: clamp(1.6rem, 6vmin, 3rem);
+}
+
+.factor-op.spoken {
+  transform: scale(1.14);
+  color: #2f2a24;
+}
+
+.factor-fig {
+  flex: 0 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+.factor-answer {
+  width: 100%;
+  max-width: 6.5rem;
+}
+
+.factor-answer :deep(.slot),
+.factor-answer .settled {
+  --min: 2.4rem;
+  width: 100%;
+  max-width: 6.5rem;
+  min-height: 2.8rem;
+  padding: 0 0.2em;
+  border-width: 3px;
+  border-radius: 0.75rem;
+  font-size: clamp(1.6rem, 4.5vw, 2.6rem);
+  box-shadow: 0 3px 0 rgba(40, 20, 0, 0.1);
+}
+
+.factor-answer .settled {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -990,31 +1354,81 @@ watch(
   line-height: 1;
   font-variant-numeric: tabular-nums;
   box-shadow:
-    0 2px 0 rgba(40, 20, 0, 0.08),
-    0 0 10px color-mix(in srgb, var(--glow) 55%, transparent);
+    0 3px 0 rgba(40, 20, 0, 0.1),
+    0 0 14px color-mix(in srgb, var(--glow) 55%, transparent);
 }
 
-.stage {
-  position: relative;
-  flex: 1 1 auto;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 0;
-  min-height: 0;
-  padding: 0.8rem 1rem 1.1rem;
-  overflow: hidden;
+.factor-slot :deep(.slot) {
+  --min: 2rem;
+  min-height: 2.2rem;
+  font-size: clamp(1.4rem, 4vw, 2.2rem);
+  border-radius: 0.65rem;
 }
 
 .copies {
+  display: grid;
+  align-content: center;
+  justify-content: center;
+  justify-items: center;
+  align-items: center;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  transform: scale(var(--fit-scale, 1));
+  transform-origin: center center;
+  transition:
+    gap var(--combine-ms, 0.42s) cubic-bezier(0.4, 0.05, 0.2, 1),
+    grid-template-columns var(--rotate-ms, 0.48s) cubic-bezier(0.4, 0.05, 0.2, 1),
+    grid-template-rows var(--rotate-ms, 0.48s) cubic-bezier(0.4, 0.05, 0.2, 1),
+    transform var(--rotate-ms, 0.48s) cubic-bezier(0.33, 0.1, 0.2, 1);
+}
+
+.copies.squish,
+.copies.rotate,
+.copies.hold {
+  gap: 0 !important;
+}
+
+.copies.shapes :deep([data-part="limb"]),
+.copies.shapes :deep([data-part="face"]) {
+  opacity: 0;
+  transition: opacity 0.18s ease;
+}
+
+.copy-fig {
+  transition: transform var(--rotate-ms, 0.48s) cubic-bezier(0.33, 0.1, 0.2, 1);
+  transform: rotate(var(--copy-rotate, 0deg));
+}
+
+.copies.shapes .copy-fig {
+  margin: -10% -12%;
+}
+
+.copy-fig.enter {
+  animation-name: copy-enter;
+  animation-timing-function: cubic-bezier(0.12, 0.82, 0.18, 1);
+  animation-fill-mode: both;
+}
+
+.product-result {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 0.45rem;
+  box-sizing: border-box;
   width: 100%;
-  height: 100%;
   min-width: 0;
   min-height: 0;
+  overflow: hidden;
+}
+
+.product-fig.pop {
+  animation: product-pop 0.52s cubic-bezier(0.34, 1.2, 0.64, 1) both;
+}
+
+.product-fig.speaking {
+  filter: drop-shadow(0 0 10px rgba(58, 168, 224, 0.45));
 }
 
 .fig {
@@ -1028,155 +1442,59 @@ watch(
   align-items: center;
 }
 
-.pass {
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
-  pointer-events: none;
-  z-index: 3;
-}
-
-.pass-fig {
-  position: absolute;
-  top: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.pass-fig.from-left {
-  left: 0;
-  transform: translate(-120%, -50%);
-}
-
-.pass-fig.from-right {
-  left: 100%;
-  transform: translate(20%, -50%);
-}
-
-.pass-fig.from-left.go {
-  animation: peek-left 2.4s cubic-bezier(0.45, 0, 0.2, 1) forwards;
-}
-
-.pass-fig.from-right.go {
-  animation: pass-right 2s cubic-bezier(0.4, 0.05, 0.2, 1) forwards;
-}
-
-.k-numeral {
-  position: absolute;
-  top: 50%;
-  left: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 0.9em;
-  padding: 0.08em 0.12em;
-  border-radius: 0.22em;
-  background: rgba(255, 255, 255, 0.82);
-  font-size: clamp(3.6rem, 18vmin, 7.5rem);
-  font-weight: 800;
-  line-height: 1;
-  font-variant-numeric: tabular-nums;
-  transform: translate(8%, -50%);
-  box-shadow:
-    0 4px 0 rgba(40, 20, 0, 0.1),
-    0 0 22px color-mix(in srgb, var(--glow) 55%, transparent);
-}
-
-.k-numeral.enter {
-  animation: k-enter 0.55s cubic-bezier(0.34, 1.15, 0.64, 1) both;
-}
-
-.k-numeral.settled {
-  transform: translate(8%, -50%);
-}
-
-.k-numeral.jiggle {
-  animation: k-jiggle 0.65s ease both;
-}
-
-@keyframes peek-left {
+@keyframes copy-enter {
   0% {
-    transform: translate(-120%, -50%) scale(0.92);
-  }
-  16% {
-    transform: translate(10%, -54%) scale(1);
-  }
-  24% {
-    transform: translate(18%, -46%) scale(1.04);
-  }
-  32% {
-    transform: translate(4%, -53%) scale(0.97);
-  }
-  40% {
-    transform: translate(12%, -49%) scale(1.02);
-  }
-  48% {
-    transform: translate(8%, -50%) scale(1);
-  }
-  78% {
-    transform: translate(8%, -50%) scale(1);
+    transform: translateX(115vw) rotate(var(--copy-rotate, 0deg));
+    opacity: 0.8;
   }
   100% {
-    transform: translate(-120%, -50%) scale(0.92);
-  }
-}
-
-@keyframes k-enter {
-  0% {
-    transform: translate(-120%, -50%) scale(0.88);
-    opacity: 0.7;
-  }
-  100% {
-    transform: translate(8%, -50%) scale(1);
+    transform: translateX(0) rotate(var(--copy-rotate, 0deg));
     opacity: 1;
   }
 }
 
-@keyframes k-jiggle {
-  0%,
+@keyframes product-pop {
+  0% {
+    transform: scale(1.42);
+    opacity: 0.55;
+  }
+  62% {
+    transform: scale(1.08);
+    opacity: 1;
+  }
   100% {
-    transform: translate(8%, -50%) rotate(0deg) scale(1);
-  }
-  18% {
-    transform: translate(8%, -56%) rotate(-7deg) scale(1.08);
-  }
-  36% {
-    transform: translate(8%, -46%) rotate(6deg) scale(1.04);
-  }
-  54% {
-    transform: translate(8%, -54%) rotate(-4deg) scale(1.06);
-  }
-  72% {
-    transform: translate(8%, -48%) rotate(3deg) scale(1.02);
+    transform: scale(1);
+    opacity: 1;
   }
 }
 
-/* left % is relative to the stage, so the costume can cross and exit fully. */
-@keyframes pass-right {
+@keyframes link-enter {
   0% {
-    left: 100%;
-    transform: translate(30%, -50%) scale(0.92);
-  }
-  22% {
-    left: 78%;
-    transform: translate(-50%, -54%) scale(1);
-  }
-  40% {
-    left: 55%;
-    transform: translate(-50%, -48%) scale(1.05);
-  }
-  55% {
-    left: 42%;
-    transform: translate(-50%, -52%) scale(0.98);
-  }
-  72% {
-    left: 22%;
-    transform: translate(-50%, -50%) scale(1);
+    transform: scale(0.72);
+    opacity: 0.5;
   }
   100% {
-    left: 0%;
-    transform: translate(-120%, -50%) scale(0.92);
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes link-jiggle {
+  0%,
+  100% {
+    transform: rotate(0deg) scale(1);
+  }
+  18% {
+    transform: rotate(-7deg) scale(1.1);
+  }
+  36% {
+    transform: rotate(6deg) scale(1.05);
+  }
+  54% {
+    transform: rotate(-4deg) scale(1.08);
+  }
+  72% {
+    transform: rotate(3deg) scale(1.03);
   }
 }
 
@@ -1251,11 +1569,14 @@ watch(
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .pass-fig.from-left.go,
-  .pass-fig.from-right.go,
-  .k-numeral.enter,
-  .k-numeral.jiggle {
+  .factor-link.enter,
+  .factor-link.jiggle,
+  .product-fig.pop,
+  .copy-fig.enter,
+  .copy-fig,
+  .copies {
     animation: none;
+    transition: none;
   }
 }
 

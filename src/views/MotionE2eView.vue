@@ -5,12 +5,17 @@ import ProductFigure from "../components/ProductFigure.vue"
 import MathInput from "../components/MathInput.vue"
 import { COUNT_LENGTH, multiple } from "../lib/math"
 import {
+  TIMES_COMBINE_HOLD_MS,
+  TIMES_COMBINE_ROTATE_MS,
+  TIMES_COMBINE_SQUISH_MS,
   TIMES_PASS_MS,
+  TIMES_PRODUCT_POP_MS,
   TIMES_RESULT_PASS_MS,
   TIMES_SPEECH_PAUSE_MS,
   createTimesCountSets,
   createTimesMotion,
   type AnimationUiEvent,
+  type CopiesCombinePhase,
   type SpeakingPart,
   type TimesLoopHost,
   type TimesMotion,
@@ -49,11 +54,9 @@ const phaseLabel = ref("idle")
 const runningScenario = ref(false)
 const loopProgress = ref("—")
 
-const passingK = ref<number | null>(null)
-const passOn = ref(false)
-const passingProduct = ref<number | null>(null)
-const productPassOn = ref(false)
 const stageK = ref<number | null>(null)
+const stageProduct = ref<number | null>(null)
+const copiesCombinePhase = ref<CopiesCombinePhase>(null)
 const speakingIndex = ref<number | null>(null)
 const speakingPart = ref<SpeakingPart | null>(null)
 const countdownIndex = ref<number | null>(null)
@@ -137,11 +140,9 @@ function spoken(index: number, part: SpeakingPart) {
 }
 
 function clearVisuals() {
-  passingK.value = null
-  passOn.value = false
-  passingProduct.value = null
-  productPassOn.value = false
   stageK.value = null
+  stageProduct.value = null
+  copiesCombinePhase.value = null
   countdownIndex.value = null
   speakingPart.value = null
   speakingIndex.value = null
@@ -209,20 +210,14 @@ function buildHost(): TimesLoopHost {
     isRevealed: () => revealedRows.value,
     getActiveField: () => "product",
     getJustLockedIndex: () => justLockedIndex.value,
-    setPassingK: (value) => {
-      passingK.value = value
-    },
-    setPassOn: (value) => {
-      passOn.value = value
-    },
-    setPassingProduct: (value) => {
-      passingProduct.value = value
-    },
-    setProductPassOn: (value) => {
-      productPassOn.value = value
-    },
     setStageK: (value) => {
       stageK.value = value
+    },
+    setStageProduct: (value) => {
+      stageProduct.value = value
+    },
+    setCopiesCombinePhase: (value) => {
+      copiesCombinePhase.value = value
     },
     setSpeakingIndex: (value) => {
       speakingIndex.value = value
@@ -278,13 +273,15 @@ function rebuild() {
     sleep,
     emit: logEvent,
     sets: createTimesCountSets(host, {
-      passMs: passMs.value,
       speechPauseMs: speechPauseMs.value,
-      resultPassMs: resultPassMs.value,
+      combineSquishMs: TIMES_COMBINE_SQUISH_MS,
+      combineRotateMs: TIMES_COMBINE_ROTATE_MS,
+      combineHoldMs: TIMES_COMBINE_HOLD_MS,
+      productPopMs: TIMES_PRODUCT_POP_MS,
     }),
   })
   logLine(
-    `rebuilt  step=${step.value} loops=${loopCount.value} passMs=${passMs.value} resultPassMs=${resultPassMs.value} speechPauseMs=${speechPauseMs.value} speed=${speed.value} mute=${muteAudio.value}`,
+    `rebuilt  step=${step.value} loops=${loopCount.value} speechPauseMs=${speechPauseMs.value} speed=${speed.value} mute=${muteAudio.value}`,
   )
   refreshStatus()
 }
@@ -597,26 +594,18 @@ onUnmounted(() => {
         </div>
         <div class="pass-area">
           <div
-            v-if="passingK !== null"
-            class="pass-fig from-left"
-            :class="{ go: passOn }"
+            v-if="stageProduct !== null"
+            class="k-numeral"
+            :class="[paintClass(stageProduct), { jiggle: speakingPart === 'product' }]"
+            :style="{
+              ...paintStyle(stageProduct),
+              '--glow': glowFor(stageProduct) ?? '#c4a57a',
+            }"
           >
-            <NumberblockView :value="passingK" :px-per-unit="18" jumping />
+            {{ stageProduct }}
           </div>
           <div
-            v-if="passingProduct !== null"
-            class="pass-fig from-right"
-            :class="{ go: productPassOn }"
-          >
-            <NumberblockView
-              :value="passingProduct"
-              :px-per-unit="18"
-              jumping
-              speaking
-            />
-          </div>
-          <div
-            v-else-if="stageK !== null && passingK === null"
+            v-else-if="stageK !== null"
             class="k-numeral"
             :class="[paintClass(stageK), { jiggle: speakingPart === 'k' }]"
             :style="{
@@ -626,11 +615,9 @@ onUnmounted(() => {
           >
             {{ stageK }}
           </div>
-          <p
-            v-if="passingK === null && passingProduct === null && stageK === null"
-            class="pass-idle"
-          >
-            playK={{ playK }} · phase {{ phaseLabel }}
+          <p v-else class="pass-idle">
+            playK={{ playK }} · combine {{ copiesCombinePhase ?? "—" }} · phase
+            {{ phaseLabel }}
           </p>
         </div>
       </div>

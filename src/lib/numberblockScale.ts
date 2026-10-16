@@ -70,6 +70,56 @@ export function blockUnits(value: number): { wide: number; tall: number } {
   return triangularUnits(value) ?? rectUnits(value)
 }
 
+/**
+ * Pack `k` copies of `step` into a grid (optionally rotating each copy 90°)
+ * so the cluster footprint best matches the product Numberblock silhouette.
+ * Example: three Twos → rotate each and stack into Six’s 2×3 box.
+ */
+export type CopiesCombineLayout = {
+  columns: number
+  rows: number
+  /** Rotate each step costume so rods can tile the product box. */
+  rotateDeg: 0 | 90
+}
+
+export function layoutCopiesForProduct(
+  step: number,
+  k: number,
+): CopiesCombineLayout {
+  const count = Math.max(1, Math.floor(k))
+  const stepU = blockUnits(step)
+  const prodU = blockUnits(step * count)
+
+  let best: CopiesCombineLayout & { score: number } = {
+    columns: count,
+    rows: 1,
+    rotateDeg: 0,
+    score: Number.POSITIVE_INFINITY,
+  }
+
+  for (const rotateDeg of [0, 90] as const) {
+    const cellW = rotateDeg === 90 ? stepU.tall : stepU.wide
+    const cellH = rotateDeg === 90 ? stepU.wide : stepU.tall
+    for (let columns = 1; columns <= count; columns++) {
+      if (count % columns !== 0) continue
+      const rows = count / columns
+      const wide = columns * cellW
+      const tall = rows * cellH
+      const score =
+        Math.abs(wide - prodU.wide) + Math.abs(tall - prodU.tall)
+      if (score < best.score) {
+        best = { columns, rows, rotateDeg, score }
+      }
+    }
+  }
+
+  return {
+    columns: best.columns,
+    rows: best.rows,
+    rotateDeg: best.rotateDeg,
+  }
+}
+
 const PART_GAP = 0.2
 
 export type PackedFigure = {
