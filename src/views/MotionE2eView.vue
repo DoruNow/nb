@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from "vue"
-import NumberblockView from "../components/NumberblockView.vue"
 import ProductFigure from "../components/ProductFigure.vue"
 import MathInput from "../components/MathInput.vue"
 import { COUNT_LENGTH, multiple } from "../lib/math"

@@ -119,7 +119,6 @@ export function logCostumeCubeScale(options: {
     }
     return {
       number: part,
-      squaresFound: scene.squareCount,
       onesFootprint: explained.onesCubes,
       screenSize,
       cell: { width: round(cellWidth), height: round(cellHeight) },

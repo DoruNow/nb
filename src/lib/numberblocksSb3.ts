@@ -2738,58 +2738,6 @@ export class ScratchSb3Assets {
   }
 
   /**
-   * Exact named character anywhere in the character packs.
-   * Used by table scenes, which keep one costume when the pack has it
-   * and otherwise fall through to generator place-value sprites.
-   */
-  private async resolveNamedCostume(
-    number: number,
-  ): Promise<{ target: string; costume: string } | null> {
-    await this.load();
-
-    const indexed = this.namedByNumber.get(number);
-    if (indexed) return indexed;
-
-    for (const targetName of CHARACTER_TARGETS) {
-      for (const name of costumeNameCandidates(number)) {
-        if (await this.hasCostume(targetName, name)) {
-          return { target: targetName, costume: name };
-        }
-      }
-    }
-
-    return null;
-  }
-
-  /**
-   * Exact named character if the pack has one; otherwise the generator
-   * sprites that make this number (not other characters added together).
-   */
-  private async resolveNumberCostumes(
-    number: number,
-  ): Promise<{ target: string; costume: string }[]> {
-    if (!Number.isInteger(number) || number < 0) return [];
-
-    const named = await this.resolveNamedCostume(number);
-    if (named) return [named];
-
-    if (number <= 99) {
-      return [
-        {
-          target: ONES_TARGET,
-          costume: await this.generatedCostumeName(ONES_TARGET, number),
-        },
-      ];
-    }
-
-    const parts = await this.getNumberParts(number);
-    return parts.map((part) => ({
-      target: part.target,
-      costume: part.costume,
-    }));
-  }
-
-  /**
    * Maps a large integer to the exact Scratch costume references required
    * for each populated decimal-place group.
    *
