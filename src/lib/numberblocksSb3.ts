@@ -1699,21 +1699,49 @@ function tagOverlayNumerals(
   }
 }
 
+/** One painted block path/rect from a costume (may span multiple unit cubes). */
+export type SceneBlockShape = {
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+  fill: string;
+};
+
+export type CostumeBlockAnalysis = {
+  scene: NumberblockScene;
+  /** Detected cube-body shapes before life tagging; used by costume→cube transform. */
+  blockShapes: SceneBlockShape[];
+};
+
 /**
  * Tag costume paths so a table cell shows only the block shape.
  * Eyes, pupils, glasses, brows, hair, crowns and limbs are marked so the
  * cell can hide them. The cubes stay put, so the cell does not change size.
  */
 export function decorateCostumeLife(svg: string): NumberblockScene {
+  return analyzeCostumeBlocks(svg).scene;
+}
+
+/**
+ * Same pipeline as {@link decorateCostumeLife}, plus the raw block shapes
+ * (fills + bboxes) for building a renderer-agnostic cube figure.
+ */
+export function analyzeCostumeBlocks(svg: string): CostumeBlockAnalysis {
+  const empty = (): CostumeBlockAnalysis => ({
+    scene: sceneFromSvg(svg),
+    blockShapes: [],
+  });
+
   const Parser = globalThis.DOMParser;
   const Serializer = globalThis.XMLSerializer;
   if (typeof Parser === "undefined" || typeof Serializer === "undefined") {
-    return sceneFromSvg(svg);
+    return empty();
   }
 
   const doc = new Parser().parseFromString(svg, "image/svg+xml");
   const root = doc.documentElement;
-  if (root.querySelector("parsererror")) return sceneFromSvg(svg);
+  if (root.querySelector("parsererror")) return empty();
 
   const view =
     parseViewBox(root.getAttribute("viewBox")) ?? sceneFromSvg(svg).body;
@@ -1742,6 +1770,19 @@ export function decorateCostumeLife(svg: string): NumberblockScene {
       }
       blocks.add(el);
     }
+  }
+
+  const blockShapes: SceneBlockShape[] = [];
+  for (const el of blocks) {
+    const bounds = shapeBounds(el);
+    if (!bounds) continue;
+    blockShapes.push({
+      minX: bounds.minX,
+      minY: bounds.minY,
+      maxX: bounds.maxX,
+      maxY: bounds.maxY,
+      fill: resolvedFill(el),
+    });
   }
 
   for (const el of shapes) {
@@ -1823,14 +1864,17 @@ export function decorateCostumeLife(svg: string): NumberblockScene {
 
   root.setAttribute("overflow", "visible");
   return {
-    svg: new Serializer().serializeToString(root),
-    width: view.width,
-    height: view.height,
-    viewX: view.x,
-    viewY: view.y,
-    body,
-    unit,
-    squareCount: blocks.size,
+    scene: {
+      svg: new Serializer().serializeToString(root),
+      width: view.width,
+      height: view.height,
+      viewX: view.x,
+      viewY: view.y,
+      body,
+      unit,
+      squareCount: blocks.size,
+    },
+    blockShapes,
   };
 }
 
@@ -2098,6 +2142,19 @@ export class ScratchSb3Assets {
     return this.loadPromise;
   }
 
+  /**
+   * Load from an already-read `.sb3` buffer (tests / Node without `fetch`).
+   * No-op if this instance already finished loading.
+   */
+  async loadFromArrayBuffer(
+    buffer: ArrayBuffer | Uint8Array,
+  ): Promise<void> {
+    if (!this.loadPromise) {
+      this.loadPromise = this.ingestBuffer(buffer);
+    }
+    return this.loadPromise;
+  }
+
   private async loadInternal(): Promise<void> {
     const response = await fetch(this.sb3Url);
 
@@ -2107,7 +2164,12 @@ export class ScratchSb3Assets {
       );
     }
 
-    const buffer = await response.arrayBuffer();
+    await this.ingestBuffer(await response.arrayBuffer());
+  }
+
+  private async ingestBuffer(
+    buffer: ArrayBuffer | Uint8Array,
+  ): Promise<void> {
     this.zip = await JSZip.loadAsync(buffer);
 
     const projectFile = this.zip.file("project.json");
